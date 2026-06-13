@@ -9,6 +9,8 @@ interface PragueLayerProps {
 }
 
 const API_BASE = "http://localhost:8000"
+// Po koľkých refreshoch bez výskytu vozidla ho zmažeme (grace period proti blikaniu)
+const MAX_MISSING_REFRESHES = 3
 
 export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
   const entitiesRef = useRef<Map<string, Cesium.Entity>>(new Map())
@@ -29,16 +31,22 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
         data.forEach((v: any) => {
           const id = String(v.id)
           ids.add(id)
-          const cat = categoriesRef.current.find(c => c.routeType === v.route_type)
+          // Vozidlo je v aktuálnej odpovedi -> vynuluj vek
+          entityAgeRef.current.set(id, 0)
+
+          const routeType = Number(v.route_type)
+          const cat = categoriesRef.current.find(c => c.routeType === routeType)
           const visible = cat?.visible ?? false
           const color = cat?.color ?? "#94a3b8"
-          const icon = createTransitIcon(color, v.route_type, v.route)
+          const icon = createTransitIcon(color, routeType, v.route)
           const position = Cesium.Cartesian3.fromDegrees(v.lon, v.lat, 5)
 
           if (entitiesRef.current.has(id)) {
             const entity = entitiesRef.current.get(id)!
             entity.show = visible
             entity.position = new Cesium.ConstantPositionProperty(position)
+            // aktualizuj uložené dáta (linka/smer sa môžu zmeniť pri reuse ID)
+            ;(entity as any)._transitData = { ...v, route_type: routeType }
           } else {
             const entity = viewer.entities.add({
               name: `${v.route} → ${v.headsign}`,
@@ -62,15 +70,23 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
                 distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 500000),
               },
             }) as any
-            entity._transitData = v
+            entity._transitData = { ...v, route_type: routeType }
             entitiesRef.current.set(id, entity)
           }
         })
 
-        // Skry vozidlá ktoré už nie sú v aktuálnej odpovedi
+        // Vozidlá ktoré nie sú v aktuálnej odpovedi: najprv skry, po grace
+        // perióde úplne zmaž (zníži blikanie pri paginovanom/meniaceom sa feede)
         entitiesRef.current.forEach((entity, key) => {
           if (!ids.has(key)) {
+            const age = (entityAgeRef.current.get(key) ?? 0) + 1
+            entityAgeRef.current.set(key, age)
             entity.show = false
+            if (age >= MAX_MISSING_REFRESHES) {
+              viewer.entities.remove(entity)
+              entitiesRef.current.delete(key)
+              entityAgeRef.current.delete(key)
+            }
           }
         })
       } catch (e) {
@@ -86,6 +102,7 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
       if (intervalRef.current) clearInterval(intervalRef.current)
       entitiesRef.current.forEach(e => viewer.entities.remove(e))
       entitiesRef.current.clear()
+      entityAgeRef.current.clear()
     }
   }, [viewer])
 
@@ -94,7 +111,7 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
     entitiesRef.current.forEach(entity => {
       const data = (entity as any)._transitData
       if (!data) return
-      const cat = categories.find(c => c.routeType === data.route_type)
+      const cat = categories.find(c => c.routeType === Number(data.route_type))
       entity.show = cat?.visible ?? false
     })
   }, [categories])

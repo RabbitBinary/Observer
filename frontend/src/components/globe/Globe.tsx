@@ -180,7 +180,7 @@ export default function Globe({ categories, vesselCategories, transitCategories,
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
       <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
       <SatelliteLayer viewer={viewer} categories={categories} />
-      <VesselLayer viewer={viewer} categories={vesselCategories} onSelect={onSelect} />
+      <VesselLayer viewer={viewer} categories={vesselCategories} />
       <TransitLayer viewer={viewer} categories={transitCategories} />
       <StopLayer viewer={viewer} categories={transitCategories} />
       <PragueLayer viewer={viewer} categories={pragueCategories} />

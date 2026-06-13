@@ -6,10 +6,11 @@ import type { VesselCategory } from "../../types/vessel"
 interface VesselLayerProps {
   viewer: Cesium.Viewer | null
   categories: VesselCategory[]
-  onSelect: (obj: any) => void
 }
 
-export default function VesselLayer({ viewer, categories, onSelect }: VesselLayerProps) {
+// Klik na loď sa rieši centrálne v Globe.tsx cez entity._vesselData,
+// preto tu už onSelect nepotrebujeme.
+export default function VesselLayer({ viewer, categories }: VesselLayerProps) {
   const entitiesRef = useRef<Map<string, Cesium.Entity>>(new Map())
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const categoriesRef = useRef<VesselCategory[]>(categories)
@@ -21,6 +22,7 @@ export default function VesselLayer({ viewer, categories, onSelect }: VesselLaye
       try {
         const res = await fetch("http://localhost:8000/api/v1/vessels/positions")
         const data = await res.json()
+        if (!Array.isArray(data)) return
 
         const ids = new Set<string>()
         data.forEach((v: any) => {
@@ -90,7 +92,7 @@ export default function VesselLayer({ viewer, categories, onSelect }: VesselLaye
     }
   }, [viewer])
 
-  // Reaguj na zmeny viditeľnosti bez reloadу
+  // Reaguj na zmeny viditeľnosti bez reloadu
   useEffect(() => {
     categoriesRef.current = categories
     entitiesRef.current.forEach(entity => {

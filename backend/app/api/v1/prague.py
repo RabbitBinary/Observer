@@ -11,17 +11,79 @@ GOLEMIO_VEHICLES_URL = "https://api.golemio.cz/v2/vehiclepositions"
 vehicle_cache: list[dict] = []
 last_fetch = 0.0
 
+# Mapovanie textových názvov -> GTFS route_type kódy
 ROUTE_TYPE_MAP = {
-    "metro": 1,
     "tram": 0,
-    "bus": 3,
-    "trolleybus": 11,
-    "ferry": 4,
-    "suburban_railway": 2,
+    "metro": 1,
+    "subway": 1,
+    "rail": 2,
     "train": 2,
+    "suburban_railway": 2,
+    "bus": 3,
+    "ferry": 4,
     "cablecar": 5,
+    "cable_car": 5,
+    "gondola": 6,
+    "funicular": 7,
     "pedestrian": 7,
+    "trolleybus": 11,
+    "monorail": 12,
 }
+
+
+def normalize_route_type(raw) -> int:
+    """
+    Golemio v gtfs.route_type vracia väčšinou číslo (GTFS kód),
+    ale niekedy textový názov. Táto funkcia oboje zjednotí na int.
+    Fallback je -1 ("Ostatné"), NIE 3 ("Autobus") — aby neznáme
+    typy netiekli nesprávne do autobusov.
+    """
+    if raw is None:
+        return -1
+    if isinstance(raw, bool):
+        return -1
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    s = str(raw).strip()
+    if s == "":
+        return -1
+    if s.lstrip("-").isdigit():
+        return int(s)
+    return ROUTE_TYPE_MAP.get(s.lower(), -1)
+
+
+async def _fetch_all_features(client: httpx.AsyncClient, headers: dict) -> list:
+    """
+    Golemio vracia max 200 vozidiel na request. Postupne stránkujeme
+    cez offset, aby sme dostali celý feed (inak entity blikajú,
+    lebo pri každom refreshi prídu iné vozidlá).
+    """
+    all_features: list = []
+    offset = 0
+    page_size = 200
+    while True:
+        res = await client.get(
+            f"{GOLEMIO_VEHICLES_URL}?limit={page_size}&offset={offset}",
+            headers=headers,
+        )
+        if res.status_code != 200:
+            # Ak prvá stránka zlyhá, vyhodíme chybu; inak vrátime čo máme
+            if offset == 0:
+                raise RuntimeError(f"Golemio API error: {res.status_code}")
+            break
+
+        feats = res.json().get("features", [])
+        if not feats:
+            break
+
+        all_features.extend(feats)
+        offset += page_size
+
+        # Poistka proti nekonečnému cyklu
+        if offset > 8000:
+            break
+
+    return all_features
 
 
 @router.get("/vehicles")
@@ -40,16 +102,10 @@ async def get_vehicles():
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            # Golemio API v2 vracia max 200 vozidiel na request
-            res = await client.get(f"{GOLEMIO_VEHICLES_URL}?limit=200", headers=headers)
-            if res.status_code != 200:
-                return JSONResponse({"error": f"Golemio API error: {res.status_code}"}, status_code=502)
+        async with httpx.AsyncClient(timeout=20) as client:
+            features = await _fetch_all_features(client, headers)
 
-            data = res.json()
-            features = data.get("features", [])
             vehicles = []
-
             for feature in features:
                 props = feature.get("properties", {})
                 geometry = feature.get("geometry", {})
@@ -62,27 +118,40 @@ async def get_vehicles():
                     continue
                 lon, lat = coords[0], coords[1]
 
+                # Preskoč nevalidné súradnice
+                if lon is None or lat is None:
+                    continue
+
                 trip = props.get("trip", {})
                 gtfs = trip.get("gtfs", {})
                 last_pos = props.get("last_position", {})
 
-                route_type_str = gtfs.get("route_type", trip.get("route_type", "bus"))
-                route_type = ROUTE_TYPE_MAP.get(str(route_type_str), 3) if isinstance(route_type_str, str) else int(route_type_str)
+                raw_route_type = gtfs.get("route_type", trip.get("route_type"))
+                route_type = normalize_route_type(raw_route_type)
 
-                # Unikátne ID: kombinácia reg. čísla + linky + smeru
+                # Unikátne ID: reg. číslo vozidla, alebo fallback z linky+smeru
                 reg = trip.get("vehicle_registration_number")
-                vehicle_id = str(reg) if reg else f"{gtfs.get('route_short_name', '?')}_{gtfs.get('trip_headsign', '?')}_{len(vehicles)}"
+                if reg:
+                    vehicle_id = str(reg)
+                else:
+                    vehicle_id = (
+                        f"{gtfs.get('route_short_name', '?')}_"
+                        f"{gtfs.get('trip_headsign', '?')}_{len(vehicles)}"
+                    )
 
-                vehicles.append({
-                    "id": vehicle_id,
-                    "route": gtfs.get("route_short_name", ""),
-                    "route_type": route_type,
-                    "headsign": gtfs.get("trip_headsign", ""),
-                    "lat": lat,
-                    "lon": lon,
-                    "heading": last_pos.get("bearing", 0),
-                    "speed": last_pos.get("speed", 0) if last_pos.get("speed") else 0,
-                })
+                speed_raw = last_pos.get("speed")
+                vehicles.append(
+                    {
+                        "id": vehicle_id,
+                        "route": gtfs.get("route_short_name", ""),
+                        "route_type": route_type,
+                        "headsign": gtfs.get("trip_headsign", ""),
+                        "lat": lat,
+                        "lon": lon,
+                        "heading": last_pos.get("bearing", 0) or 0,
+                        "speed": speed_raw if speed_raw else 0,
+                    }
+                )
 
             vehicle_cache = vehicles
             last_fetch = now
