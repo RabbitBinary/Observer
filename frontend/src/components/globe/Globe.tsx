@@ -50,6 +50,7 @@ export default function Globe({ categories, vesselCategories, transitCategories,
     })
 
     viewerRef.current.clock.currentTime = Cesium.JulianDate.now()
+    viewerRef.current.clock.shouldAnimate = true
 
     const initMap = async () => {
       try {

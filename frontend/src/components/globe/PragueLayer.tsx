@@ -9,17 +9,20 @@ interface PragueLayerProps {
 }
 
 const API_BASE = "http://localhost:8000"
-// Po koľkých refreshoch bez výskytu vozidla ho zmažeme (grace period proti blikaniu)
-const MAX_MISSING_REFRESHES = 3
+const REFRESH_MS = 10000          // ako často ťaháme z backendu
+const MAX_MISSING_REFRESHES = 3   // po koľkých refreshoch bez výskytu vozidlo zmažeme
 
 export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
   const entitiesRef = useRef<Map<string, Cesium.Entity>>(new Map())
-  const entityAgeRef = useRef<Map<string, number>>(new Map()) // koľko refreshov bez výskytu
+  const entityAgeRef = useRef<Map<string, number>>(new Map())
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const categoriesRef = useRef<PragueCategory[]>(categories)
 
   useEffect(() => {
     if (!viewer) return
+
+    // Hodiny musia bežať, inak SampledPositionProperty neinterpoluje
+    viewer.clock.shouldAnimate = true
 
     const fetchVehicles = async () => {
       try {
@@ -27,11 +30,20 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
         const data = await res.json()
         if (!Array.isArray(data)) return
 
+        // Čas vzorky: berieme „teraz", aby pohyb nadväzoval na hodiny viewra.
+        // (Golemio timestamp by spôsobil skoky do minulosti pri rozladených hodinách.)
+        const sampleTime = Cesium.JulianDate.now()
+        // vzorka platí trochu do budúcnosti, nech vozidlo plynulo dôjde
+        const nextTime = Cesium.JulianDate.addSeconds(
+          sampleTime,
+          REFRESH_MS / 1000,
+          new Cesium.JulianDate()
+        )
+
         const ids = new Set<string>()
         data.forEach((v: any) => {
           const id = String(v.id)
           ids.add(id)
-          // Vozidlo je v aktuálnej odpovedi -> vynuluj vek
           entityAgeRef.current.set(id, 0)
 
           const routeType = Number(v.route_type)
@@ -42,16 +54,30 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
           const position = Cesium.Cartesian3.fromDegrees(v.lon, v.lat, 5)
 
           if (entitiesRef.current.has(id)) {
+            // Existujúca entita: pridáme novú vzorku -> Cesium dointerpoluje pohyb
             const entity = entitiesRef.current.get(id)!
             entity.show = visible
-            entity.position = new Cesium.ConstantPositionProperty(position)
-            // aktualizuj uložené dáta (linka/smer sa môžu zmeniť pri reuse ID)
+            const posProp = (entity as any)._posProp as Cesium.SampledPositionProperty
+            posProp.addSample(sampleTime, position)
+            // poistka proti zamrznutiu na konci vzoriek
+            posProp.addSample(nextTime, position)
             ;(entity as any)._transitData = { ...v, route_type: routeType }
           } else {
+            // Nová entita s interpolovanou pozíciou
+            const posProp = new Cesium.SampledPositionProperty()
+            posProp.setInterpolationOptions({
+              interpolationDegree: 1,
+              interpolationAlgorithm: Cesium.LinearApproximation,
+            })
+            posProp.forwardExtrapolationType = Cesium.ExtrapolationType.HOLD
+            posProp.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD
+            posProp.addSample(sampleTime, position)
+            posProp.addSample(nextTime, position)
+
             const entity = viewer.entities.add({
               name: `${v.route} → ${v.headsign}`,
               show: visible,
-              position,
+              position: posProp,
               billboard: {
                 image: icon,
                 width: 24,
@@ -70,13 +96,13 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
                 distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 500000),
               },
             }) as any
+            entity._posProp = posProp
             entity._transitData = { ...v, route_type: routeType }
             entitiesRef.current.set(id, entity)
           }
         })
 
-        // Vozidlá ktoré nie sú v aktuálnej odpovedi: najprv skry, po grace
-        // perióde úplne zmaž (zníži blikanie pri paginovanom/meniaceom sa feede)
+        // Vozidlá mimo aktuálnej odpovede: skry, po grace perióde zmaž
         entitiesRef.current.forEach((entity, key) => {
           if (!ids.has(key)) {
             const age = (entityAgeRef.current.get(key) ?? 0) + 1
@@ -96,7 +122,7 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
 
     fetchVehicles()
     if (intervalRef.current) clearInterval(intervalRef.current)
-    intervalRef.current = setInterval(fetchVehicles, 30000) // každých 30s
+    intervalRef.current = setInterval(fetchVehicles, REFRESH_MS)
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)

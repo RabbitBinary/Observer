@@ -7,7 +7,7 @@ router = APIRouter()
 
 GOLEMIO_VEHICLES_URL = "https://api.golemio.cz/v2/vehiclepositions"
 
-# Cache pre reálne polohy (aktualizuje sa každých 30s)
+# Cache pre reálne polohy
 vehicle_cache: list[dict] = []
 last_fetch = 0.0
 
@@ -34,13 +34,10 @@ ROUTE_TYPE_MAP = {
 def normalize_route_type(raw) -> int:
     """
     Golemio v gtfs.route_type vracia väčšinou číslo (GTFS kód),
-    ale niekedy textový názov. Táto funkcia oboje zjednotí na int.
-    Fallback je -1 ("Ostatné"), NIE 3 ("Autobus") — aby neznáme
-    typy netiekli nesprávne do autobusov.
+    niekedy textový názov. Zjednotíme na int.
+    Fallback -1 ("Ostatné"), NIE 3 ("Autobus").
     """
-    if raw is None:
-        return -1
-    if isinstance(raw, bool):
+    if raw is None or isinstance(raw, bool):
         return -1
     if isinstance(raw, (int, float)):
         return int(raw)
@@ -52,11 +49,44 @@ def normalize_route_type(raw) -> int:
     return ROUTE_TYPE_MAP.get(s.lower(), -1)
 
 
+def _first(*vals):
+    """Vráti prvú ne-prázdnu hodnotu."""
+    for v in vals:
+        if v is not None and v != "":
+            return v
+    return None
+
+
+def build_vehicle_id(trip: dict, gtfs: dict) -> str | None:
+    """
+    Stabilné ID nezávislé od poradia vo feede.
+    Priorita: registračné číslo vozidla -> trip_id -> (linka + smer).
+    NIKDY nepoužívame index v poli (to spôsobovalo mutáciu ID a blikanie).
+    """
+    reg = _first(
+        trip.get("vehicle_registration_number"),
+        trip.get("vehicle_id"),
+        gtfs.get("vehicle_id"),
+    )
+    if reg is not None:
+        return f"reg_{reg}"
+
+    trip_id = _first(trip.get("id"), gtfs.get("trip_id"), trip.get("trip_id"))
+    if trip_id is not None:
+        return f"trip_{trip_id}"
+
+    route = gtfs.get("route_short_name")
+    headsign = gtfs.get("trip_headsign")
+    if route or headsign:
+        return f"rt_{route or '?'}_{headsign or '?'}"
+
+    return None
+
+
 async def _fetch_all_features(client: httpx.AsyncClient, headers: dict) -> list:
     """
-    Golemio vracia max 200 vozidiel na request. Postupne stránkujeme
-    cez offset, aby sme dostali celý feed (inak entity blikajú,
-    lebo pri každom refreshi prídu iné vozidlá).
+    Golemio vracia max ~200 vozidiel na request. Stránkujeme cez offset,
+    aby sme dostali celý feed (inak vozidlá blikajú).
     """
     all_features: list = []
     offset = 0
@@ -67,22 +97,16 @@ async def _fetch_all_features(client: httpx.AsyncClient, headers: dict) -> list:
             headers=headers,
         )
         if res.status_code != 200:
-            # Ak prvá stránka zlyhá, vyhodíme chybu; inak vrátime čo máme
             if offset == 0:
                 raise RuntimeError(f"Golemio API error: {res.status_code}")
             break
-
         feats = res.json().get("features", [])
         if not feats:
             break
-
         all_features.extend(feats)
         offset += page_size
-
-        # Poistka proti nekonečnému cyklu
-        if offset > 8000:
+        if offset > 8000:  # poistka
             break
-
     return all_features
 
 
@@ -93,7 +117,8 @@ async def get_vehicles():
     global vehicle_cache, last_fetch
 
     now = time.time()
-    if now - last_fetch < 30 and vehicle_cache:
+    # cache 15s — chráni Golemio limit, no drží dáta čerstvé
+    if now - last_fetch < 15 and vehicle_cache:
         return JSONResponse(vehicle_cache)
 
     headers = {
@@ -106,10 +131,11 @@ async def get_vehicles():
             features = await _fetch_all_features(client, headers)
 
             vehicles = []
+            seen_ids: set[str] = set()
+
             for feature in features:
                 props = feature.get("properties", {})
                 geometry = feature.get("geometry", {})
-
                 if not geometry or not props:
                     continue
 
@@ -117,29 +143,35 @@ async def get_vehicles():
                 if len(coords) < 2:
                     continue
                 lon, lat = coords[0], coords[1]
-
-                # Preskoč nevalidné súradnice
                 if lon is None or lat is None:
                     continue
 
-                trip = props.get("trip", {})
-                gtfs = trip.get("gtfs", {})
-                last_pos = props.get("last_position", {})
+                trip = props.get("trip", {}) or {}
+                gtfs = trip.get("gtfs", {}) or {}
+                last_pos = props.get("last_position", {}) or {}
 
-                raw_route_type = gtfs.get("route_type", trip.get("route_type"))
-                route_type = normalize_route_type(raw_route_type)
+                vehicle_id = build_vehicle_id(trip, gtfs)
+                if vehicle_id is None:
+                    continue
+                # ak by sa ID predsa zopakovalo, sprav ho unikátnym
+                if vehicle_id in seen_ids:
+                    vehicle_id = f"{vehicle_id}_{len(vehicles)}"
+                seen_ids.add(vehicle_id)
 
-                # Unikátne ID: reg. číslo vozidla, alebo fallback z linky+smeru
-                reg = trip.get("vehicle_registration_number")
-                if reg:
-                    vehicle_id = str(reg)
-                else:
-                    vehicle_id = (
-                        f"{gtfs.get('route_short_name', '?')}_"
-                        f"{gtfs.get('trip_headsign', '?')}_{len(vehicles)}"
-                    )
+                route_type = normalize_route_type(
+                    _first(gtfs.get("route_type"), trip.get("route_type"))
+                )
 
                 speed_raw = last_pos.get("speed")
+                # timestamp poslednej polohy (kvôli interpolácii na FE)
+                ts = _first(
+                    last_pos.get("origin_timestamp"),
+                    last_pos.get("last_stop", {}).get("departure_timestamp")
+                    if isinstance(last_pos.get("last_stop"), dict)
+                    else None,
+                    props.get("last_position", {}).get("tracking_at"),
+                )
+
                 vehicles.append(
                     {
                         "id": vehicle_id,
@@ -150,17 +182,17 @@ async def get_vehicles():
                         "lon": lon,
                         "heading": last_pos.get("bearing", 0) or 0,
                         "speed": speed_raw if speed_raw else 0,
+                        "timestamp": ts,  # ISO string alebo None
                     }
                 )
 
             vehicle_cache = vehicles
             last_fetch = now
-            print(f"Prague vehicles updated: {len(vehicles)}")  # debug log
+            print(f"Prague vehicles updated: {len(vehicles)}")
             return JSONResponse(vehicles)
 
     except Exception as e:
-        print(f"Prague error: {e}")  # debug log
-        # Ak máme cache, vráť ju aj keď je stará (lepšie ako nič)
+        print(f"Prague error: {e}")
         if vehicle_cache:
             return JSONResponse(vehicle_cache)
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -180,7 +212,6 @@ async def health():
                 data = res.json()
                 count = len(data.get("features", []))
                 return {"status": "ok", "vehicles": count}
-            else:
-                return {"status": "error", "code": res.status_code}
+            return {"status": "error", "code": res.status_code}
     except Exception as e:
         return {"status": "error", "message": str(e)}
