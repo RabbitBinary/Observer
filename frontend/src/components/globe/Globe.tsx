@@ -103,9 +103,9 @@ export default function Globe({ categories, vesselCategories, transitCategories,
           const shipTypeNum = parseInt(vesselData.ship_type) || 0
           const shipTypeLabel =
             shipTypeNum >= 60 && shipTypeNum <= 69 ? "Osobná" :
-            shipTypeNum >= 70 && shipTypeNum <= 79 ? "Nákladná" :
-            shipTypeNum >= 80 && shipTypeNum <= 89 ? "Tanker" :
-            shipTypeNum >= 30 && shipTypeNum <= 39 ? "Rybárska" : "Ostatné"
+              shipTypeNum >= 70 && shipTypeNum <= 79 ? "Nákladná" :
+                shipTypeNum >= 80 && shipTypeNum <= 89 ? "Tanker" :
+                  shipTypeNum >= 30 && shipTypeNum <= 39 ? "Rybárska" : "Ostatné"
           details = {
             "MMSI": vesselData.mmsi,
             "LAT": Number(vesselData.lat).toFixed(4) + "°",
@@ -118,8 +118,9 @@ export default function Globe({ categories, vesselCategories, transitCategories,
           type = "aircraft"
           const typeLabel =
             transitData.route_type === 0 ? "Električka" :
-            transitData.route_type === 11 ? "Trolejbus" : "Autobus"
+              transitData.route_type === 11 ? "Trolejbus" : "Autobus"
           details = {
+            "__city": transitData.city || "bratislava",
             "Linka": transitData.route,
             "Smer": transitData.headsign,
             "Typ": typeLabel,
@@ -140,16 +141,15 @@ export default function Globe({ categories, vesselCategories, transitCategories,
               const byType: Record<number, string[]> = { 0: [], 11: [], 3: [] }
               routes.forEach(r => { if (byType[r.type]) byType[r.type].push(r.route) })
               const labels: Record<number, string> = { 0: "Električky", 11: "Trolejbusy", 3: "Autobusy" }
-              const emojis: Record<number, string> = { 0: "🚊", 11: "🔌", 3: "🚌" }
               let routeStr = ""
               for (const t of [0, 11, 3]) {
                 if (byType[t].length > 0) {
-                  routeStr += `${emojis[t]} ${labels[t]}: ${byType[t].join(", ")}\n`
+                  routeStr += `${labels[t]}: ${byType[t].join(", ")}\n`
                 }
               }
               onSelect({ name: stopData.name, type: "stop", details: { ...details, "Linky": routeStr.trim() } })
             })
-            .catch(() => {})
+            .catch(() => { })
           return // počkáme na fetch, nevoláme onSelect hneď
         } else {
           const pos = (entity as Cesium.Entity).position?.getValue(Cesium.JulianDate.now())

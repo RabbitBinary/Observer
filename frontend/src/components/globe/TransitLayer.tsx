@@ -69,7 +69,7 @@ export default function TransitLayer({ viewer, categories }: TransitLayerProps) 
                 distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 500000),
               },
             }) as any
-            entity._transitData = { ...v, route_type: routeType }
+            entity._transitData = { ...v, route_type: routeType, city: "bratislava" }
             entitiesRef.current.set(id, entity)
           }
         })

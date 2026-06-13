@@ -61,7 +61,7 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
             posProp.addSample(sampleTime, position)
             // poistka proti zamrznutiu na konci vzoriek
             posProp.addSample(nextTime, position)
-            ;(entity as any)._transitData = { ...v, route_type: routeType }
+            ;(entity as any)._transitData = { ...v, route_type: routeType, city: "prague" }
           } else {
             // Nová entita s interpolovanou pozíciou
             const posProp = new Cesium.SampledPositionProperty()
