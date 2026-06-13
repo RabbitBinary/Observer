@@ -4,7 +4,6 @@ import Globe from "../components/globe/Globe"
 import Topbar from "../components/layout/Topbar"
 import LeftSidebar from "../components/layout/LeftSidebar"
 import RightSidebar from "../components/layout/RightSidebar"
-import TopPanel from "../components/layout/TopPanel"
 import type { SelectedObject } from "../components/layout/RightSidebar"
 import { SATELLITE_CATEGORIES } from "../types/satellite"
 import type { SatelliteCategory } from "../types/satellite"
@@ -129,7 +128,6 @@ export default function DashboardPage() {
             onSelect={setSelectedObject}
             onViewerReady={setGlobeViewer}
           />
-          <TopPanel viewer={globeViewer} selectedObject={selectedObject} />
         </div>
         <RightSidebar
           categories={categories}

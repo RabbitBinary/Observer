@@ -275,3 +275,30 @@
 .rs-group-border {
   border-bottom: 1px solid #161b22;
 }
+
+.rs-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+ 
+.rs-detail-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #161b22;
+  border: 1px solid #21262d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+ 
+/* keďže názov a typ sú teraz v .rs-detail-head, zrušíme im spodný margin */
+.rs-detail-head .rs-detail-name {
+  margin-bottom: 2px;
+}
+.rs-detail-head .rs-detail-type {
+  margin-bottom: 0;
+}

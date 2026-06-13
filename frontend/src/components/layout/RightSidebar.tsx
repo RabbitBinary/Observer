@@ -26,6 +26,55 @@ export interface SelectedObject {
   details: Record<string, string>
 }
 
+const SatelliteIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 36 36" fill="none">
+    <rect x="14" y="14" width="8" height="8" rx="1" fill="#00d4ff" opacity="0.9"/>
+    <line x1="4" y1="18" x2="13" y2="18" stroke="#00d4ff" strokeWidth="1.5"/>
+    <line x1="23" y1="18" x2="32" y2="18" stroke="#00d4ff" strokeWidth="1.5"/>
+    <line x1="18" y1="4" x2="18" y2="13" stroke="#00d4ff" strokeWidth="1.5"/>
+    <line x1="18" y1="23" x2="18" y2="32" stroke="#00d4ff" strokeWidth="1.5"/>
+    <rect x="4" y="15" width="8" height="6" rx="0.5" fill="#00d4ff" opacity="0.5"/>
+    <rect x="24" y="15" width="8" height="6" rx="0.5" fill="#00d4ff" opacity="0.5"/>
+  </svg>
+)
+
+const VesselIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <path d="M12 2 L20 20 L12 15 L4 20 Z" fill="#0066aa" opacity="0.9"/>
+    <path d="M12 2 L20 20 L12 15 Z" fill="#00d4ff" opacity="0.9"/>
+  </svg>
+)
+
+const TransitIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <rect x="2" y="4" width="20" height="14" rx="3" fill="#ef4444" opacity="0.9"/>
+    <rect x="4" y="6" width="6" height="5" rx="1" fill="white" opacity="0.25"/>
+    <rect x="14" y="6" width="6" height="5" rx="1" fill="white" opacity="0.25"/>
+    <rect x="4" y="13" width="4" height="2" rx="1" fill="white" opacity="0.4"/>
+    <rect x="16" y="13" width="4" height="2" rx="1" fill="white" opacity="0.4"/>
+    <rect x="7" y="18" width="3" height="3" rx="1" fill="#ef4444" opacity="0.9"/>
+    <rect x="14" y="18" width="3" height="3" rx="1" fill="#ef4444" opacity="0.9"/>
+  </svg>
+)
+
+const QuakeIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="3" fill="#f97316" opacity="0.95"/>
+    <circle cx="12" cy="12" r="7" stroke="#f97316" strokeWidth="1.3" opacity="0.55" fill="none"/>
+    <circle cx="12" cy="12" r="10.5" stroke="#f97316" strokeWidth="1" opacity="0.3" fill="none"/>
+  </svg>
+)
+
+function ObjectIcon({ type }: { type: SelectedObject["type"] }) {
+  switch (type) {
+    case "vessel": return <VesselIcon />
+    case "aircraft": return <TransitIcon />
+    case "stop": return <TransitIcon />
+    case "earthquake": return <QuakeIcon />
+    default: return <SatelliteIcon />
+  }
+}
+
 export default function RightSidebar({
   categories, onCategoryChange,
   vesselCategories, onVesselCategoryChange,
@@ -34,13 +83,13 @@ export default function RightSidebar({
   earthquakeCategories, onEarthquakeCategoryChange,
   selectedObject
 }: RightSidebarProps) {
+  // Vrstvy panel otvorený, ale jednotlivé skupiny defaultne ZATVORENÉ
   const [layersOpen, setLayersOpen] = useState(true)
-  const [satellitesOpen, setSatellitesOpen] = useState(true)
-  const [vesselsOpen, setVesselsOpen] = useState(true)
-  const [transitOpen, setTransitOpen] = useState(true)
-  const [pragueOpen, setPragueOpen] = useState(true)
-  const [quakeOpen, setQuakeOpen] = useState(true)
-  const [searchQuery, setSearchQuery] = useState("")
+  const [satellitesOpen, setSatellitesOpen] = useState(false)
+  const [vesselsOpen, setVesselsOpen] = useState(false)
+  const [transitOpen, setTransitOpen] = useState(false)
+  const [pragueOpen, setPragueOpen] = useState(false)
+  const [quakeOpen, setQuakeOpen] = useState(false)
 
   const togglePragueCategory = (id: string) => {
     onPragueCategoryChange(pragueCategories.map(c => c.id === id ? { ...c, visible: !c.visible } : c))
@@ -75,8 +124,14 @@ export default function RightSidebar({
   const detailTypeLabel = () => {
     switch (selectedObject?.type) {
       case "satellite": return "Satelit"
-      case "aircraft": return "MHD"
-      case "stop": return "Zastávka"
+      case "aircraft": {
+        const city = selectedObject.details?.["__city"]
+        return city === "prague" ? "MHD Praha" : "MHD Bratislava"
+      }
+      case "stop": {
+        const city = selectedObject.details?.["__city"]
+        return city === "prague" ? "Zastávka Praha" : "Zastávka Bratislava"
+      }
       case "earthquake": return "Zemetrasenie"
       case "vessel": return "Loď"
       default: return ""
@@ -86,7 +141,39 @@ export default function RightSidebar({
   return (
     <div className="rs">
 
-      {/* VRSTVY */}
+      {/* DETAILY – hore, vždy viditeľné */}
+      <div className="rs-panel">
+        <div className="rs-panel-header rs-static">
+          <span className="rs-panel-title">DETAILY</span>
+        </div>
+        <div className="rs-panel-body">
+          {selectedObject ? (
+            <div className="rs-detail">
+              <div className="rs-detail-head">
+                <div className="rs-detail-icon"><ObjectIcon type={selectedObject.type} /></div>
+                <div>
+                  <div className="rs-detail-name">{selectedObject.name}</div>
+                  <div className="rs-detail-type">{detailTypeLabel()}</div>
+                </div>
+              </div>
+              <div className="rs-detail-rows">
+                {Object.entries(selectedObject.details)
+                  .filter(([key]) => !key.startsWith("__"))
+                  .map(([key, val]) => (
+                  <div key={key} className="rs-detail-row">
+                    <span className="rs-detail-key">{key}</span>
+                    <span className="rs-detail-val">{val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rs-empty">Kliknite na objekt na mape</div>
+          )}
+        </div>
+      </div>
+
+      {/* VRSTVY – pod detailmi, skupiny defaultne zatvorené */}
       <div className="rs-panel">
         <div className="rs-panel-header" onClick={() => setLayersOpen(o => !o)}>
           <span className="rs-panel-title">VRSTVY</span>
@@ -254,53 +341,6 @@ export default function RightSidebar({
 
           </div>
         )}
-      </div>
-
-      {/* DETAILY */}
-      <div className="rs-panel">
-        <div className="rs-panel-header rs-static">
-          <span className="rs-panel-title">DETAILY</span>
-        </div>
-        <div className="rs-panel-body">
-          {selectedObject ? (
-            <div className="rs-detail">
-              <div className="rs-detail-name">{selectedObject.name}</div>
-              <div className="rs-detail-type">
-                {detailTypeLabel()}
-              </div>
-              <div className="rs-detail-rows">
-                {Object.entries(selectedObject.details)
-                  .filter(([key]) => !key.startsWith("__"))
-                  .map(([key, val]) => (
-                  <div key={key} className="rs-detail-row">
-                    <span className="rs-detail-key">{key}</span>
-                    <span className="rs-detail-val">{val}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="rs-empty">Kliknite na objekt na mape</div>
-          )}
-        </div>
-      </div>
-
-      {/* VYHĽADÁVANIE */}
-      <div className="rs-panel">
-        <div className="rs-panel-header rs-static">
-          <span className="rs-panel-title">VYHĽADÁVANIE</span>
-        </div>
-        <div className="rs-panel-body">
-          <input
-            className="rs-search"
-            placeholder="Názov satelitu, lode, lietadla..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
-          {searchQuery.length > 1 && (
-            <div className="rs-empty" style={{ marginTop: 8 }}>Žiadne výsledky</div>
-          )}
-        </div>
       </div>
 
     </div>
