@@ -1,0 +1,14 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Backend
+backend/.env
+backend/__pycache__/
+backend/.venv/
+backend/*.pyc
+
+# Všeobecné
+.DS_Store
+.vscode/

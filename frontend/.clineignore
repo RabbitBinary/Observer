@@ -1,0 +1,75 @@
+# Závislosti
+node_modules/
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Build výstupy
+dist/
+build/
+out/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Logy a databázy
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Secrets / konfigurácia
+.env
+.env.*
+!.env.example
+.secrets
+*.key
+*.pem
+*.crt
+
+# Cline vlastné (ak používaš plan/notes)
+.cline/
+cline_docs/
+*.cline.md
+
+# Systémové súbory
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dočasné súbory
+*.tmp
+*.temp
+*.cache
+.cache/
+
+# Testy / pokrytie (ak nechceš, aby čítal veľa fixture)
+coverage/
+.nyc_output/
+*.test.js
+*.spec.js
+*.test.ts
+*.spec.ts
+
+# Veľké binárne súbory
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.ico
+*.pdf
+*.zip
+*.tar
+*.gz
+*.mp4
+*.mp3
