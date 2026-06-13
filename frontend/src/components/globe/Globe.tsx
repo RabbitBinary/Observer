@@ -12,6 +12,9 @@ import type { VesselCategory } from "../../types/vessel"
 import type { TransitCategory } from "../../types/transit"
 import type { PragueCategory } from "../../types/prague"
 import type { SelectedObject } from "../layout/RightSidebar"
+import PragueStopLayer from "./PragueStopLayer"
+import EarthquakeLayer from "./EarthquakeLayer"
+import type { EarthquakeCategory } from "../../types/earthquake"
 
 Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_TOKEN
 
@@ -22,9 +25,10 @@ interface GlobeProps {
   pragueCategories: PragueCategory[]
   onSelect: (obj: SelectedObject | null) => void
   onViewerReady: (viewer: Cesium.Viewer) => void
+  earthquakeCategories: EarthquakeCategory[]
 }
 
-export default function Globe({ categories, vesselCategories, transitCategories, pragueCategories, onSelect, onViewerReady }: GlobeProps) {
+export default function Globe({ categories, vesselCategories, transitCategories, pragueCategories, earthquakeCategories, onSelect, onViewerReady }: GlobeProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Cesium.Viewer | null>(null)
   const [viewer, setViewer] = useState<Cesium.Viewer | null>(null)
@@ -72,9 +76,11 @@ export default function Globe({ categories, vesselCategories, transitCategories,
         const vesselData = entity._vesselData
         const transitData = entity._transitData
         const stopData = entity._stopData
+        const pragueStopData = entity._pragueStopData
+        const earthquakeData = entity._earthquakeData
 
         let details: Record<string, string> = {}
-        let type: "satellite" | "vessel" | "aircraft" | "stop" = "satellite"
+        let type: "satellite" | "vessel" | "aircraft" | "stop" | "earthquake" = "satellite"
 
         if (satrec) {
           const now = new Date()
@@ -114,7 +120,8 @@ export default function Globe({ categories, vesselCategories, transitCategories,
             "Kurz": vesselData.heading === 511 ? "—" : (vesselData.heading || 0) + "°",
             "Typ": shipTypeLabel,
           }
-        } else if (transitData) {
+        }
+         else if (transitData) {
           type = "aircraft"
           const typeLabel =
             transitData.route_type === 0 ? "Električka" :
@@ -147,10 +154,28 @@ export default function Globe({ categories, vesselCategories, transitCategories,
                   routeStr += `${labels[t]}: ${byType[t].join(", ")}\n`
                 }
               }
-              onSelect({ name: stopData.name, type: "stop", details: { ...details, "Linky": routeStr.trim() } })
+              onSelect({ name: stopData.name, type: "stop", details: { ...details, "__city": "bratislava", "Linky": routeStr.trim() } })
             })
             .catch(() => { })
           return // počkáme na fetch, nevoláme onSelect hneď
+        } else if (pragueStopData) {
+          type = "stop"
+          details = {
+            "__city": "prague",
+            "Názov": pragueStopData.name,
+            "LAT": Number(pragueStopData.lat).toFixed(4) + "°",
+            "LON": Number(pragueStopData.lon).toFixed(4) + "°",
+          }
+        } else if (earthquakeData) {
+          type = "earthquake"
+          details = {
+            "Magnitúda": earthquakeData.mag != null ? `${earthquakeData.mag} ${earthquakeData.magType || ""}`.trim() : "—",
+            "Miesto": earthquakeData.place || "—",
+            "Hĺbka": earthquakeData.depth != null ? Number(earthquakeData.depth).toFixed(1) + " km" : "—",
+            "LAT": Number(earthquakeData.lat).toFixed(4) + "°",
+            "LON": Number(earthquakeData.lon).toFixed(4) + "°",
+            "Tsunami": earthquakeData.tsunami ? "Áno" : "Nie",
+          }
         } else {
           const pos = (entity as Cesium.Entity).position?.getValue(Cesium.JulianDate.now())
           if (pos) {
@@ -185,6 +210,8 @@ export default function Globe({ categories, vesselCategories, transitCategories,
       <TransitLayer viewer={viewer} categories={transitCategories} />
       <StopLayer viewer={viewer} categories={transitCategories} />
       <PragueLayer viewer={viewer} categories={pragueCategories} />
+      <PragueStopLayer viewer={viewer} categories={pragueCategories} />
+      <EarthquakeLayer viewer={viewer} categories={earthquakeCategories} />
     </div>
   )
 }

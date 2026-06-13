@@ -22,7 +22,7 @@ class Trip(Base):
     __tablename__ = "trips"
     trip_id = Column(String, primary_key=True)
     route_id = Column(String)
-    service_id = Column(String, index=True, nullable=True)  # NOVÉ: väzba na calendar
+    service_id = Column(String, index=True, nullable=True)
     shape_id = Column(String, nullable=True)
     trip_headsign = Column(String, nullable=True)
     direction_id = Column(Integer, nullable=True)
@@ -47,7 +47,6 @@ class Shape(Base):
     shape_pt_sequence = Column(Integer)
 
 
-# NOVÉ: calendar.txt — pravidelné služby (deň v týždni + dátumový rozsah)
 class Calendar(Base):
     __tablename__ = "calendar"
     service_id = Column(String, primary_key=True)
@@ -58,15 +57,23 @@ class Calendar(Base):
     friday = Column(Integer, default=0)
     saturday = Column(Integer, default=0)
     sunday = Column(Integer, default=0)
-    start_date = Column(String)  # YYYYMMDD
-    end_date = Column(String)    # YYYYMMDD
+    start_date = Column(String)
+    end_date = Column(String)
 
 
-# NOVÉ: calendar_dates.txt — výnimky (sviatky a mimoriadne dni)
-# exception_type: 1 = služba v daný deň PRIDANÁ, 2 = ODOBRANÁ
 class CalendarDate(Base):
     __tablename__ = "calendar_dates"
     id = Column(Integer, primary_key=True, autoincrement=True)
     service_id = Column(String, index=True)
-    date = Column(String, index=True)  # YYYYMMDD
+    date = Column(String, index=True)
     exception_type = Column(Integer)
+
+
+# NOVÉ: pražské zastávky (z Golemio API, statické dáta v lokálnej DB).
+# Oddelená tabuľka, aby sa nemiešali s bratislavskými stops a ich väzbami.
+class PragueStop(Base):
+    __tablename__ = "prague_stops"
+    stop_id = Column(String, primary_key=True)
+    stop_name = Column(String)
+    stop_lat = Column(Float)
+    stop_lon = Column(Float)

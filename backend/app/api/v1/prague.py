@@ -1,17 +1,21 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 import httpx
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.core.config import settings
+from app.core.database import get_db
+from app.models.transit import PragueStop
 
 router = APIRouter()
 
 GOLEMIO_VEHICLES_URL = "https://api.golemio.cz/v2/vehiclepositions"
+GOLEMIO_STOPS_URL = "https://api.golemio.cz/v2/gtfs/stops"
 
 # Cache pre reálne polohy
 vehicle_cache: list[dict] = []
 last_fetch = 0.0
 
-# Mapovanie textových názvov -> GTFS route_type kódy
 ROUTE_TYPE_MAP = {
     "tram": 0,
     "metro": 1,
@@ -32,11 +36,6 @@ ROUTE_TYPE_MAP = {
 
 
 def normalize_route_type(raw) -> int:
-    """
-    Golemio v gtfs.route_type vracia väčšinou číslo (GTFS kód),
-    niekedy textový názov. Zjednotíme na int.
-    Fallback -1 ("Ostatné"), NIE 3 ("Autobus").
-    """
     if raw is None or isinstance(raw, bool):
         return -1
     if isinstance(raw, (int, float)):
@@ -50,7 +49,6 @@ def normalize_route_type(raw) -> int:
 
 
 def _first(*vals):
-    """Vráti prvú ne-prázdnu hodnotu."""
     for v in vals:
         if v is not None and v != "":
             return v
@@ -58,11 +56,6 @@ def _first(*vals):
 
 
 def build_vehicle_id(trip: dict, gtfs: dict) -> str | None:
-    """
-    Stabilné ID nezávislé od poradia vo feede.
-    Priorita: registračné číslo vozidla -> trip_id -> (linka + smer).
-    NIKDY nepoužívame index v poli (to spôsobovalo mutáciu ID a blikanie).
-    """
     reg = _first(
         trip.get("vehicle_registration_number"),
         trip.get("vehicle_id"),
@@ -70,24 +63,17 @@ def build_vehicle_id(trip: dict, gtfs: dict) -> str | None:
     )
     if reg is not None:
         return f"reg_{reg}"
-
     trip_id = _first(trip.get("id"), gtfs.get("trip_id"), trip.get("trip_id"))
     if trip_id is not None:
         return f"trip_{trip_id}"
-
     route = gtfs.get("route_short_name")
     headsign = gtfs.get("trip_headsign")
     if route or headsign:
         return f"rt_{route or '?'}_{headsign or '?'}"
-
     return None
 
 
 async def _fetch_all_features(client: httpx.AsyncClient, headers: dict) -> list:
-    """
-    Golemio vracia max ~200 vozidiel na request. Stránkujeme cez offset,
-    aby sme dostali celý feed (inak vozidlá blikajú).
-    """
     all_features: list = []
     offset = 0
     page_size = 200
@@ -105,7 +91,7 @@ async def _fetch_all_features(client: httpx.AsyncClient, headers: dict) -> list:
             break
         all_features.extend(feats)
         offset += page_size
-        if offset > 8000:  # poistka
+        if offset > 8000:
             break
     return all_features
 
@@ -117,7 +103,6 @@ async def get_vehicles():
     global vehicle_cache, last_fetch
 
     now = time.time()
-    # cache 15s — chráni Golemio limit, no drží dáta čerstvé
     if now - last_fetch < 15 and vehicle_cache:
         return JSONResponse(vehicle_cache)
 
@@ -132,13 +117,11 @@ async def get_vehicles():
 
             vehicles = []
             seen_ids: set[str] = set()
-
             for feature in features:
                 props = feature.get("properties", {})
                 geometry = feature.get("geometry", {})
                 if not geometry or not props:
                     continue
-
                 coords = geometry.get("coordinates", [])
                 if len(coords) < 2:
                     continue
@@ -153,7 +136,6 @@ async def get_vehicles():
                 vehicle_id = build_vehicle_id(trip, gtfs)
                 if vehicle_id is None:
                     continue
-                # ak by sa ID predsa zopakovalo, sprav ho unikátnym
                 if vehicle_id in seen_ids:
                     vehicle_id = f"{vehicle_id}_{len(vehicles)}"
                 seen_ids.add(vehicle_id)
@@ -161,16 +143,7 @@ async def get_vehicles():
                 route_type = normalize_route_type(
                     _first(gtfs.get("route_type"), trip.get("route_type"))
                 )
-
                 speed_raw = last_pos.get("speed")
-                # timestamp poslednej polohy (kvôli interpolácii na FE)
-                ts = _first(
-                    last_pos.get("origin_timestamp"),
-                    last_pos.get("last_stop", {}).get("departure_timestamp")
-                    if isinstance(last_pos.get("last_stop"), dict)
-                    else None,
-                    props.get("last_position", {}).get("tracking_at"),
-                )
 
                 vehicles.append(
                     {
@@ -182,7 +155,6 @@ async def get_vehicles():
                         "lon": lon,
                         "heading": last_pos.get("bearing", 0) or 0,
                         "speed": speed_raw if speed_raw else 0,
-                        "timestamp": ts,  # ISO string alebo None
                     }
                 )
 
@@ -198,9 +170,111 @@ async def get_vehicles():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@router.post("/stops/import")
+async def import_stops(db: Session = Depends(get_db)):
+    """
+    Jednorazový import pražských zastávok z Golemio /v2/gtfs/stops do DB.
+    Zastávky sú statické dáta, takže ich stačí importovať raz (a občas obnoviť).
+    """
+    headers = {
+        "X-Access-Token": settings.GOLEMIO_API_KEY,
+        "Accept": "application/json",
+    }
+    try:
+        # Zmaž staré
+        db.execute(text("DELETE FROM prague_stops"))
+        db.commit()
+
+        total = 0
+        offset = 0
+        page_size = 10000  # Golemio dovoľuje až 10000 na request
+        seen: set[str] = set()
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            while True:
+                res = await client.get(
+                    f"{GOLEMIO_STOPS_URL}?limit={page_size}&offset={offset}",
+                    headers=headers,
+                )
+                if res.status_code != 200:
+                    if offset == 0:
+                        return JSONResponse(
+                            {"error": f"Golemio API error: {res.status_code}"},
+                            status_code=502,
+                        )
+                    break
+
+                data = res.json()
+                features = data.get("features", [])
+                if not features:
+                    break
+
+                batch = []
+                for f in features:
+                    props = f.get("properties", {}) or {}
+                    geom = f.get("geometry", {}) or {}
+                    coords = geom.get("coordinates", []) or []
+
+                    stop_id = _first(props.get("stop_id"), props.get("id"))
+                    if stop_id is None or stop_id in seen:
+                        continue
+
+                    # Súradnice: najprv z geometry (lon, lat), inak z properties
+                    if len(coords) >= 2 and coords[0] is not None:
+                        lon, lat = coords[0], coords[1]
+                    else:
+                        lat = props.get("stop_lat")
+                        lon = props.get("stop_lon")
+                    if lat is None or lon is None:
+                        continue
+
+                    seen.add(stop_id)
+                    batch.append(
+                        PragueStop(
+                            stop_id=str(stop_id),
+                            stop_name=props.get("stop_name", ""),
+                            stop_lat=float(lat),
+                            stop_lon=float(lon),
+                        )
+                    )
+
+                if batch:
+                    db.bulk_save_objects(batch)
+                    db.commit()
+                    total += len(batch)
+
+                # ak prišlo menej než page_size, je koniec
+                if len(features) < page_size:
+                    break
+                offset += page_size
+
+        print(f"Prague stops imported: {total}")
+        return {"status": "ok", "imported": total}
+
+    except Exception as e:
+        print(f"Prague stops import error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/stops")
+def get_stops(db: Session = Depends(get_db)):
+    """Vráti pražské zastávky z DB."""
+    stops = db.query(PragueStop).all()
+    return JSONResponse(
+        [
+            {
+                "id": s.stop_id,
+                "name": s.stop_name,
+                "lat": s.stop_lat,
+                "lon": s.stop_lon,
+            }
+            for s in stops
+        ]
+    )
+
+
 @router.get("/health")
 async def health():
-    """Otestuje spojenie s Golemio API"""
     headers = {
         "X-Access-Token": settings.GOLEMIO_API_KEY,
         "Accept": "application/json",
@@ -215,3 +289,9 @@ async def health():
             return {"status": "error", "code": res.status_code}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@router.get("/stops/count")
+def stops_count(db: Session = Depends(get_db)):
+    """Pomocný endpoint na overenie, koľko zastávok je v DB."""
+    return {"count": db.query(PragueStop).count()}

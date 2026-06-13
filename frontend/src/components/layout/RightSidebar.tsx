@@ -3,6 +3,7 @@ import type { SatelliteCategory } from "../../types/satellite"
 import type { VesselCategory } from "../../types/vessel"
 import type { TransitCategory } from "../../types/transit"
 import type { PragueCategory } from "../../types/prague"
+import type { EarthquakeCategory } from "../../types/earthquake"
 import "./RightSidebar.css"
 
 interface RightSidebarProps {
@@ -14,27 +15,31 @@ interface RightSidebarProps {
   onTransitCategoryChange: (updated: TransitCategory[]) => void
   pragueCategories: PragueCategory[]
   onPragueCategoryChange: (updated: PragueCategory[]) => void
+  earthquakeCategories: EarthquakeCategory[]
+  onEarthquakeCategoryChange: (updated: EarthquakeCategory[]) => void
   selectedObject: SelectedObject | null
 }
 
 export interface SelectedObject {
   name: string
-  type: "satellite" | "aircraft" | "vessel" | "stop"
+  type: "satellite" | "aircraft" | "vessel" | "stop" | "earthquake"
   details: Record<string, string>
 }
 
-export default function RightSidebar({ 
-  categories, onCategoryChange, 
-  vesselCategories, onVesselCategoryChange, 
+export default function RightSidebar({
+  categories, onCategoryChange,
+  vesselCategories, onVesselCategoryChange,
   transitCategories, onTransitCategoryChange,
   pragueCategories, onPragueCategoryChange,
-  selectedObject 
+  earthquakeCategories, onEarthquakeCategoryChange,
+  selectedObject
 }: RightSidebarProps) {
   const [layersOpen, setLayersOpen] = useState(true)
   const [satellitesOpen, setSatellitesOpen] = useState(true)
   const [vesselsOpen, setVesselsOpen] = useState(true)
   const [transitOpen, setTransitOpen] = useState(true)
   const [pragueOpen, setPragueOpen] = useState(true)
+  const [quakeOpen, setQuakeOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
 
   const togglePragueCategory = (id: string) => {
@@ -57,11 +62,26 @@ export default function RightSidebar({
     onTransitCategoryChange(transitCategories.map(c => c.id === id ? { ...c, visible: !c.visible } : c))
   }
 
+  const toggleQuakeCategory = (id: string) => {
+    onEarthquakeCategoryChange(earthquakeCategories.map(c => c.id === id ? { ...c, visible: !c.visible } : c))
+  }
+
   const chevron = (open: boolean) => (
     <svg className={`rs-chevron ${open ? "open" : ""}`} width="10" height="10" viewBox="0 0 10 10">
       <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
     </svg>
   )
+
+  const detailTypeLabel = () => {
+    switch (selectedObject?.type) {
+      case "satellite": return "Satelit"
+      case "aircraft": return "MHD"
+      case "stop": return "Zastávka"
+      case "earthquake": return "Zemetrasenie"
+      case "vessel": return "Loď"
+      default: return ""
+    }
+  }
 
   return (
     <div className="rs">
@@ -190,6 +210,32 @@ export default function RightSidebar({
 
             <div className="rs-divider" />
 
+            {/* Zemetrasenia */}
+            <div className="rs-group">
+              <div className="rs-group-header" onClick={() => setQuakeOpen(o => !o)}>
+                <span className="rs-group-label">Zemetrasenia</span>
+                {chevron(quakeOpen)}
+              </div>
+              {quakeOpen && (
+                <div className="rs-categories">
+                  {earthquakeCategories.map((cat, i) => (
+                    <div key={cat.id} className={`rs-category ${i < earthquakeCategories.length - 1 ? "rs-category-border" : ""}`}
+                      style={{ borderLeftColor: cat.visible ? cat.color : "transparent" }}>
+                      <div className="rs-category-main" onClick={() => toggleQuakeCategory(cat.id)}>
+                        <input type="checkbox" checked={cat.visible} onChange={() => toggleQuakeCategory(cat.id)}
+                          onClick={e => e.stopPropagation()} className="rs-cb" />
+                        <span className="rs-category-label" style={{ color: cat.visible ? "#e6edf3" : "#8b949e" }}>
+                          {cat.label}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rs-divider" />
+
             {/* Budúce vrstvy */}
             {[
               { label: "Letecká doprava" },
@@ -220,12 +266,12 @@ export default function RightSidebar({
             <div className="rs-detail">
               <div className="rs-detail-name">{selectedObject.name}</div>
               <div className="rs-detail-type">
-                {selectedObject.type === "satellite" ? "Satelit" : 
-                 selectedObject.type === "aircraft" ? "MHD" : 
-                 selectedObject.type === "stop" ? "Zastávka" : "Loď"}
+                {detailTypeLabel()}
               </div>
               <div className="rs-detail-rows">
-                {Object.entries(selectedObject.details).map(([key, val]) => (
+                {Object.entries(selectedObject.details)
+                  .filter(([key]) => !key.startsWith("__"))
+                  .map(([key, val]) => (
                   <div key={key} className="rs-detail-row">
                     <span className="rs-detail-key">{key}</span>
                     <span className="rs-detail-val">{val}</span>

@@ -4,18 +4,16 @@ export interface PragueCategory {
   routeType: number
   color: string
   visible: boolean
-  // Golemio vehiclepositions feed neobsahuje GPS polohy metra,
-  // takže táto kategória ostane prázdna. Necháme ju kvôli legende,
-  // ale v UI ju môžeš skryť alebo zobraziť poznámku "bez GPS".
-  noRealtime?: boolean
 }
 
 export const PRAGUE_CATEGORIES: PragueCategory[] = [
   { id: "prague_tram", label: "Električka", routeType: 0, color: "#f59e0b", visible: false },
-  { id: "prague_metro", label: "Metro", routeType: 1, color: "#ef4444", visible: false, noRealtime: true },
+  { id: "prague_metro", label: "Metro", routeType: 1, color: "#ef4444", visible: false },
   { id: "prague_bus", label: "Autobus", routeType: 3, color: "#3b82f6", visible: false },
   { id: "prague_trolley", label: "Trolejbus", routeType: 11, color: "#8b5cf6", visible: false },
   { id: "prague_train", label: "Vlak", routeType: 2, color: "#22c55e", visible: false },
   { id: "prague_ferry", label: "Loď", routeType: 4, color: "#06b6d4", visible: false },
-  { id: "prague_other", label: "Ostatné", routeType: -1, color: "#94a3b8", visible: false },
+  // Nahradené pôvodné "Ostatné" -> zastávky (statické body z DB).
+  // routeType -1 sa nepoužije na vozidlá; vrstva PragueStopLayer číta id "prague_stops".
+  { id: "prague_stops", label: "Zastávky", routeType: -1, color: "#94a3b8", visible: false },
 ]

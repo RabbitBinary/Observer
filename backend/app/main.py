@@ -8,6 +8,7 @@ from app.core.database import Base, engine
 from app.models import user, tle, vessel
 from app.api.v1 import auth, satellites, vessels, transit, prague
 from app.models import user, tle, vessel, transit as transit_model
+from app.api.v1 import auth, satellites, vessels, transit, prague, earthquakes
 
 Base.metadata.create_all(bind=engine)
 
@@ -32,6 +33,7 @@ app.include_router(satellites.router, prefix="/api/v1/satellites", tags=["satell
 app.include_router(vessels.router, prefix="/api/v1/vessels", tags=["vessels"])
 app.include_router(transit.router, prefix="/api/v1/transit", tags=["transit"])
 app.include_router(prague.router, prefix="/api/v1/prague", tags=["prague"])
+app.include_router(earthquakes.router, prefix="/api/v1/earthquakes", tags=["earthquakes"])
 
 @app.get("/")
 def root():
