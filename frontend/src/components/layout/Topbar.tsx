@@ -27,7 +27,7 @@ export default function Topbar({ basemap, onBasemapChange, onSearchPick }: Topba
 
   return (
     <div className="topbar">
-      <span className="topbar-title">OBSERVER</span>
+      <span className="topbar-title">ZEUS</span>
 
       <div className="topbar-center">
         <SearchPanel onPick={onSearchPick} />

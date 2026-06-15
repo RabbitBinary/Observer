@@ -36,7 +36,7 @@ const INITIAL_CATEGORIES: CategoryToggle[] = [
     { id: "satellites", label: "Satelity", enabled: true },
     { id: "vessels", label: "Lode", enabled: false },
     { id: "aircraft", label: "Lietadlá", enabled: false },
-    { id: "quakes", label: "Zeme.", enabled: false },
+    { id: "quakes", label: "Zemetrasenia", enabled: false },
 ]
 
 export default function SearchPanel({ onPick }: SearchPanelProps) {

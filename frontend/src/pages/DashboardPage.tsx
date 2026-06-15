@@ -101,7 +101,7 @@ export default function DashboardPage() {
 
     // cerveny stvorec: satelit -> sleduje pohyb cez TLE; miesto -> ziadny stvorec
     if (hit.kind === "satellite" && hit.line1 && hit.line2) {
-      globeApiRef.current?.highlightSatellite(hit.line1, hit.line2)
+      globeApiRef.current?.highlightSatellite(hit.line1, hit.line2, hit.name)
     } else {
       globeApiRef.current?.clearHighlight()
     }
