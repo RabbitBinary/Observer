@@ -16,9 +16,11 @@ export default function TransitLayer({ viewer, categories }: TransitLayerProps) 
   const entityAgeRef = useRef<Map<string, number>>(new Map())
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const categoriesRef = useRef<TransitCategory[]>(categories)
+  const anyVisible = categories.some(c => c.visible)
 
   useEffect(() => {
     if (!viewer) return
+    if (!anyVisible) return
 
     const fetchVehicles = async () => {
       try {
@@ -102,7 +104,7 @@ export default function TransitLayer({ viewer, categories }: TransitLayerProps) 
       entitiesRef.current.clear()
       entityAgeRef.current.clear()
     }
-  }, [viewer])
+  }, [viewer, anyVisible])
 
   useEffect(() => {
     categoriesRef.current = categories

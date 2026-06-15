@@ -2,13 +2,13 @@ import { useEffect, useRef } from "react"
 import * as Cesium from "cesium"
 import { createTransitIcon } from "../../utils/transitIcon"
 import type { PragueCategory } from "../../types/prague"
+import { API_BASE } from "../../config"
 
 interface PragueLayerProps {
   viewer: Cesium.Viewer | null
   categories: PragueCategory[]
 }
 
-const API_BASE = "http://localhost:8000"
 const REFRESH_MS = 10000          // ako často ťaháme z backendu
 const MAX_MISSING_REFRESHES = 3   // po koľkých refreshoch bez výskytu vozidlo zmažeme
 
@@ -17,9 +17,11 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
   const entityAgeRef = useRef<Map<string, number>>(new Map())
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const categoriesRef = useRef<PragueCategory[]>(categories)
+  const anyVisible = categories.some(c => c.visible)
 
   useEffect(() => {
     if (!viewer) return
+    if (!anyVisible) return
 
     // Hodiny musia bežať, inak SampledPositionProperty neinterpoluje
     viewer.clock.shouldAnimate = true
@@ -130,7 +132,7 @@ export default function PragueLayer({ viewer, categories }: PragueLayerProps) {
       entitiesRef.current.clear()
       entityAgeRef.current.clear()
     }
-  }, [viewer])
+  }, [viewer, anyVisible])
 
   useEffect(() => {
     categoriesRef.current = categories

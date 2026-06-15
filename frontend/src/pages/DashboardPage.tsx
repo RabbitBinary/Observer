@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react"
 import * as Cesium from "cesium"
 import Globe from "../components/globe/Globe"
+import type { GlobeApi } from "../components/globe/Globe"
 import Topbar from "../components/layout/Topbar"
 import LeftSidebar from "../components/layout/LeftSidebar"
 import RightSidebar from "../components/layout/RightSidebar"
@@ -15,7 +16,11 @@ import { PRAGUE_CATEGORIES } from "../types/prague"
 import type { PragueCategory } from "../types/prague"
 import { EARTHQUAKE_CATEGORIES } from "../types/earthquake"
 import type { EarthquakeCategory } from "../types/earthquake"
+import { AIRCRAFT_CATEGORIES } from "../types/aircraft"
+import type { AircraftCategory, AircraftRegion } from "../types/aircraft"
 import "./DashboardPage.css"
+import { DEFAULT_BASEMAP, type BasemapMode } from "../components/layout/basemap"
+import type { SearchHit } from "../components/layout/SearchPanel"
 
 type Region = "bratislava" | "prague" | "satellites" | "vessels" | "world"
 
@@ -44,16 +49,23 @@ export default function DashboardPage() {
   const [transitCategories, setTransitCategories] = useState<TransitCategory[]>(TRANSIT_CATEGORIES)
   const [pragueCategories, setPragueCategories] = useState<PragueCategory[]>(PRAGUE_CATEGORIES)
   const [earthquakeCategories, setEarthquakeCategories] = useState<EarthquakeCategory[]>(EARTHQUAKE_CATEGORIES)
+  const [aircraftCategories, setAircraftCategories] = useState<AircraftCategory[]>(AIRCRAFT_CATEGORIES)
+  const [aircraftRegion, setAircraftRegion] = useState<AircraftRegion>("world")
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null)
   const [globeViewer, setGlobeViewer] = useState<Cesium.Viewer | null>(null)
+  const [basemap, setBasemap] = useState<BasemapMode>(DEFAULT_BASEMAP)
+  const globeApiRef = useRef<GlobeApi | null>(null)
 
   const prevSat = useRef<Set<string>>(new Set())
   const prevVessel = useRef<Set<string>>(new Set())
   const prevTransit = useRef<Set<string>>(new Set())
   const prevPrague = useRef<Set<string>>(new Set())
   const prevQuake = useRef<Set<string>>(new Set())
+  const prevPlane = useRef<Set<string>>(new Set())
   const currentRegion = useRef<Region | null>(null)
   const didInitialView = useRef(false)
+  // ked vyberes objekt z vyhladavania, potlacime automaticky zoom na region
+  const suppressRegionZoom = useRef(false)
 
   const flyToRegion = (region: Region) => {
     if (!globeViewer) return
@@ -67,15 +79,39 @@ export default function DashboardPage() {
     })
   }
 
+  // Klik na vysledok vyhladavania: zapni vrstvu, zazoomuj priamo na objekt, zvyrazni.
+  const handleSearchPick = (hit: SearchHit) => {
+    if (!globeViewer) return
+
+    if (hit.kind === "satellite" && hit.group) {
+      // potlac automaticky regionovy zoom, ktory by inak odletel od objektu
+      suppressRegionZoom.current = true
+      setCategories(prev =>
+        prev.map(c => (c.group === hit.group ? { ...c, visible: true } : c))
+      )
+    }
+
+    // vyska kamery: satelit nad jeho drahu, miesto nizko
+    const camHeight = hit.kind === "satellite" ? 2_000_000 : 8000
+    globeViewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(hit.lon, hit.lat, camHeight),
+      duration: 1.8,
+      easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT,
+    })
+
+    // cerveny stvorec: satelit -> sleduje pohyb cez TLE; miesto -> ziadny stvorec
+    if (hit.kind === "satellite" && hit.line1 && hit.line2) {
+      globeApiRef.current?.highlightSatellite(hit.line1, hit.line2)
+    } else {
+      globeApiRef.current?.clearHighlight()
+    }
+  }
+
   useEffect(() => {
     if (!globeViewer || didInitialView.current) return
     didInitialView.current = true
     globeViewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(
-        INITIAL_VIEW.lon,
-        INITIAL_VIEW.lat,
-        INITIAL_VIEW.height
-      ),
+      destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.lon, INITIAL_VIEW.lat, INITIAL_VIEW.height),
       duration: 2.5,
       easingFunction: Cesium.EasingFunction.QUADRATIC_OUT,
     })
@@ -89,12 +125,26 @@ export default function DashboardPage() {
     const transitNow = visibleIds(transitCategories)
     const pragueNow = visibleIds(pragueCategories)
     const quakeNow = visibleIds(earthquakeCategories)
+    const planeNow = visibleIds(aircraftCategories)
 
     const satNew = newlyEnabled(prevSat.current, satNow)
     const vesselNew = newlyEnabled(prevVessel.current, vesselNow)
     const transitNew = newlyEnabled(prevTransit.current, transitNow)
     const pragueNew = newlyEnabled(prevPrague.current, pragueNow)
     const quakeNew = newlyEnabled(prevQuake.current, quakeNow)
+
+    prevSat.current = satNow
+    prevVessel.current = vesselNow
+    prevTransit.current = transitNow
+    prevPrague.current = pragueNow
+    prevQuake.current = quakeNow
+    prevPlane.current = planeNow
+
+    // ak zmena prisla z vyhladavania (pick), nezoomuj na region - kamera uz leti na objekt
+    if (suppressRegionZoom.current) {
+      suppressRegionZoom.current = false
+      return
+    }
 
     let target: Region | null = null
     if (pragueNew.length > 0) target = "prague"
@@ -103,19 +153,17 @@ export default function DashboardPage() {
     else if (vesselNew.length > 0) target = "vessels"
     else if (quakeNew.length > 0) target = "world"
 
-    prevSat.current = satNow
-    prevVessel.current = vesselNow
-    prevTransit.current = transitNow
-    prevPrague.current = pragueNow
-    prevQuake.current = quakeNow
-
     if (target) flyToRegion(target)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categories, vesselCategories, transitCategories, pragueCategories, earthquakeCategories, globeViewer])
+  }, [categories, vesselCategories, transitCategories, pragueCategories, earthquakeCategories, aircraftCategories, globeViewer])
 
   return (
     <div className="dashboard">
-      <Topbar />
+      <Topbar
+        basemap={basemap}
+        onBasemapChange={setBasemap}
+        onSearchPick={handleSearchPick}
+      />
       <div className="dashboard-body">
         <LeftSidebar />
         <div className="globe-container">
@@ -125,8 +173,12 @@ export default function DashboardPage() {
             transitCategories={transitCategories}
             pragueCategories={pragueCategories}
             earthquakeCategories={earthquakeCategories}
+            aircraftCategories={aircraftCategories}
+            aircraftRegion={aircraftRegion}
             onSelect={setSelectedObject}
             onViewerReady={setGlobeViewer}
+            onApiReady={(api) => { globeApiRef.current = api }}
+            basemap={basemap}
           />
         </div>
         <RightSidebar
@@ -140,6 +192,10 @@ export default function DashboardPage() {
           onPragueCategoryChange={setPragueCategories}
           earthquakeCategories={earthquakeCategories}
           onEarthquakeCategoryChange={setEarthquakeCategories}
+          aircraftCategories={aircraftCategories}
+          onAircraftCategoryChange={setAircraftCategories}
+          aircraftRegion={aircraftRegion}
+          onAircraftRegionChange={setAircraftRegion}
           selectedObject={selectedObject}
         />
       </div>

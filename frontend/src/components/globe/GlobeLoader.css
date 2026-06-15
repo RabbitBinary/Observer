@@ -1,0 +1,132 @@
+.globe-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  background: radial-gradient(
+    ellipse at center,
+    #0d1117 0%,
+    #010409 70%
+  );
+  /* Plynulé zmiznutie keď je scéna pripravená */
+  opacity: 1;
+  transition: opacity 0.6s ease;
+  pointer-events: all;
+}
+
+.globe-loader.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Orbitálny motív – sedí k téme sledovania objektov na obežnej dráhe */
+.gl-orbit {
+  position: relative;
+  width: 96px;
+  height: 96px;
+}
+
+.gl-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: #1f6feb;
+  box-shadow: 0 0 16px 2px rgba(31, 111, 235, 0.6);
+}
+
+.gl-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(48, 54, 61, 0.9);
+}
+
+.gl-ring::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: #58a6ff;
+  box-shadow: 0 0 8px 1px rgba(88, 166, 255, 0.8);
+}
+
+.gl-ring.r1 { animation: gl-spin 2.4s linear infinite; }
+.gl-ring.r2 {
+  transform: scale(0.66);
+  animation: gl-spin 1.7s linear infinite reverse;
+  border-color: rgba(48, 54, 61, 0.6);
+}
+.gl-ring.r3 {
+  transform: scale(0.4);
+  animation: gl-spin 1.1s linear infinite;
+  border-color: rgba(48, 54, 61, 0.4);
+}
+
+@keyframes gl-spin {
+  to { transform: rotate(360deg); }
+}
+.gl-ring.r2 { animation-name: gl-spin-2; }
+@keyframes gl-spin-2 {
+  from { transform: scale(0.66) rotate(0deg); }
+  to   { transform: scale(0.66) rotate(-360deg); }
+}
+.gl-ring.r3 { animation-name: gl-spin-3; }
+@keyframes gl-spin-3 {
+  from { transform: scale(0.4) rotate(0deg); }
+  to   { transform: scale(0.4) rotate(360deg); }
+}
+
+.gl-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.gl-title {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  letter-spacing: 4px;
+  color: #e6edf3;
+  text-transform: uppercase;
+}
+
+.gl-status {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: #8b949e;
+  min-height: 14px;
+}
+
+.gl-bar {
+  width: 180px;
+  height: 2px;
+  background: #21262d;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.gl-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1f6feb, #58a6ff);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gl-ring { animation: none !important; }
+  .globe-loader { transition: opacity 0.2s linear; }
+}

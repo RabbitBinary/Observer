@@ -2,13 +2,13 @@ import { useEffect, useRef } from "react"
 import * as Cesium from "cesium"
 import type { EarthquakeCategory } from "../../types/earthquake"
 import { categoryForMag } from "../../types/earthquake"
+import { API_BASE } from "../../config"
 
 interface EarthquakeLayerProps {
   viewer: Cesium.Viewer | null
   categories: EarthquakeCategory[]
 }
 
-const API_BASE = "http://localhost:8000"
 const REFRESH_MS = 300000 // 5 min
 
 interface Quake {
@@ -38,9 +38,11 @@ export default function EarthquakeLayer({ viewer, categories }: EarthquakeLayerP
   const entitiesRef = useRef<Map<string, Cesium.Entity>>(new Map())
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const categoriesRef = useRef<EarthquakeCategory[]>(categories)
+  const anyVisible = categories.some(c => c.visible)
 
   useEffect(() => {
     if (!viewer) return
+    if (!anyVisible) return
 
     const fetchQuakes = async () => {
       try {
@@ -108,7 +110,7 @@ export default function EarthquakeLayer({ viewer, categories }: EarthquakeLayerP
       entitiesRef.current.forEach(e => viewer.entities.remove(e))
       entitiesRef.current.clear()
     }
-  }, [viewer])
+  }, [viewer, anyVisible])
 
   useEffect(() => {
     categoriesRef.current = categories

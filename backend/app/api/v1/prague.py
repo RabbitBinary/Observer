@@ -1,8 +1,21 @@
+"""
+MHD Praha – polohy vozidiel z Golemio API v2.
+
+ZMENA OPROTI PÔVODNÉMU:
+Pôvodne /vehicles pri prázdnej cache SYNCHRÓNNE stránkoval Golemio
+(po 200 záznamoch až do 8000), takže prvý užívateľský request čakal
+niekoľko sekúnd. Teraz to plní background task `prague_vehicles_background()`
+spustený v lifespan (rovnaký vzor ako ais_background pre lode).
+
+Endpoint /vehicles už NIKDY nečaká na Golemio – vráti hotovú cache okamžite.
+Statické zastávky ostávajú v DB (PragueStop) tak ako boli.
+"""
+import asyncio
+import time
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 import httpx
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.transit import PragueStop
@@ -12,26 +25,17 @@ router = APIRouter()
 GOLEMIO_VEHICLES_URL = "https://api.golemio.cz/v2/vehiclepositions"
 GOLEMIO_STOPS_URL = "https://api.golemio.cz/v2/gtfs/stops"
 
-# Cache pre reálne polohy
+REFRESH_INTERVAL = 15  # sekúnd medzi obnovami na pozadí
+
+# Cache plnená VÝHRADNE background taskom
 vehicle_cache: list[dict] = []
 last_fetch = 0.0
 
 ROUTE_TYPE_MAP = {
-    "tram": 0,
-    "metro": 1,
-    "subway": 1,
-    "rail": 2,
-    "train": 2,
-    "suburban_railway": 2,
-    "bus": 3,
-    "ferry": 4,
-    "cablecar": 5,
-    "cable_car": 5,
-    "gondola": 6,
-    "funicular": 7,
-    "pedestrian": 7,
-    "trolleybus": 11,
-    "monorail": 12,
+    "tram": 0, "metro": 1, "subway": 1, "rail": 2, "train": 2,
+    "suburban_railway": 2, "bus": 3, "ferry": 4, "cablecar": 5,
+    "cable_car": 5, "gondola": 6, "funicular": 7, "pedestrian": 7,
+    "trolleybus": 11, "monorail": 12,
 }
 
 
@@ -96,202 +100,99 @@ async def _fetch_all_features(client: httpx.AsyncClient, headers: dict) -> list:
     return all_features
 
 
+def _parse_features(features: list) -> list[dict]:
+    vehicles = []
+    seen_ids: set[str] = set()
+    for feature in features:
+        props = feature.get("properties", {})
+        geometry = feature.get("geometry", {})
+        if not geometry or not props:
+            continue
+        coords = geometry.get("coordinates", [])
+        if len(coords) < 2:
+            continue
+        lon, lat = coords[0], coords[1]
+        if lon is None or lat is None:
+            continue
+
+        trip = props.get("trip", {}) or {}
+        gtfs = trip.get("gtfs", {}) or {}
+        last_pos = props.get("last_position", {}) or {}
+
+        vehicle_id = build_vehicle_id(trip, gtfs)
+        if vehicle_id is None:
+            continue
+        if vehicle_id in seen_ids:
+            vehicle_id = f"{vehicle_id}_{len(vehicles)}"
+        seen_ids.add(vehicle_id)
+
+        route_type = normalize_route_type(
+            _first(gtfs.get("route_type"), trip.get("route_type"))
+        )
+        speed_raw = last_pos.get("speed")
+
+        vehicles.append({
+            "id": vehicle_id,
+            "route": gtfs.get("route_short_name", ""),
+            "route_type": route_type,
+            "headsign": gtfs.get("trip_headsign", ""),
+            "lat": lat,
+            "lon": lon,
+            "heading": last_pos.get("bearing", 0) or 0,
+            "speed": speed_raw if speed_raw else 0,
+        })
+    return vehicles
+
+
+async def prague_vehicles_background():
+    """
+    Beží na pozadí (spúšťa sa v lifespan). Každých REFRESH_INTERVAL sekúnd
+    natiahne polohy z Golemia do vehicle_cache. Užívateľské requesty
+    nikdy nečakajú na toto sťahovanie.
+    """
+    global vehicle_cache, last_fetch
+    headers = {
+        "X-Access-Token": settings.GOLEMIO_API_KEY,
+        "Accept": "application/json",
+    }
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                features = await _fetch_all_features(client, headers)
+                vehicle_cache = _parse_features(features)
+                last_fetch = time.time()
+                print(f"[bg] Prague vehicles updated: {len(vehicle_cache)}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[bg] Prague error: {e}")
+        await asyncio.sleep(REFRESH_INTERVAL)
+
+
 @router.get("/vehicles")
 async def get_vehicles():
-    """Vráti reálne GPS polohy MHD vozidiel v Prahe z Golemio API v2"""
-    import time
-    global vehicle_cache, last_fetch
-
-    now = time.time()
-    if now - last_fetch < 15 and vehicle_cache:
-        return JSONResponse(vehicle_cache)
-
-    headers = {
-        "X-Access-Token": settings.GOLEMIO_API_KEY,
-        "Accept": "application/json",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            features = await _fetch_all_features(client, headers)
-
-            vehicles = []
-            seen_ids: set[str] = set()
-            for feature in features:
-                props = feature.get("properties", {})
-                geometry = feature.get("geometry", {})
-                if not geometry or not props:
-                    continue
-                coords = geometry.get("coordinates", [])
-                if len(coords) < 2:
-                    continue
-                lon, lat = coords[0], coords[1]
-                if lon is None or lat is None:
-                    continue
-
-                trip = props.get("trip", {}) or {}
-                gtfs = trip.get("gtfs", {}) or {}
-                last_pos = props.get("last_position", {}) or {}
-
-                vehicle_id = build_vehicle_id(trip, gtfs)
-                if vehicle_id is None:
-                    continue
-                if vehicle_id in seen_ids:
-                    vehicle_id = f"{vehicle_id}_{len(vehicles)}"
-                seen_ids.add(vehicle_id)
-
-                route_type = normalize_route_type(
-                    _first(gtfs.get("route_type"), trip.get("route_type"))
-                )
-                speed_raw = last_pos.get("speed")
-
-                vehicles.append(
-                    {
-                        "id": vehicle_id,
-                        "route": gtfs.get("route_short_name", ""),
-                        "route_type": route_type,
-                        "headsign": gtfs.get("trip_headsign", ""),
-                        "lat": lat,
-                        "lon": lon,
-                        "heading": last_pos.get("bearing", 0) or 0,
-                        "speed": speed_raw if speed_raw else 0,
-                    }
-                )
-
-            vehicle_cache = vehicles
-            last_fetch = now
-            print(f"Prague vehicles updated: {len(vehicles)}")
-            return JSONResponse(vehicles)
-
-    except Exception as e:
-        print(f"Prague error: {e}")
-        if vehicle_cache:
-            return JSONResponse(vehicle_cache)
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-@router.post("/stops/import")
-async def import_stops(db: Session = Depends(get_db)):
-    """
-    Jednorazový import pražských zastávok z Golemio /v2/gtfs/stops do DB.
-    Zastávky sú statické dáta, takže ich stačí importovať raz (a občas obnoviť).
-    """
-    headers = {
-        "X-Access-Token": settings.GOLEMIO_API_KEY,
-        "Accept": "application/json",
-    }
-    try:
-        # Zmaž staré
-        db.execute(text("DELETE FROM prague_stops"))
-        db.commit()
-
-        total = 0
-        offset = 0
-        page_size = 10000  # Golemio dovoľuje až 10000 na request
-        seen: set[str] = set()
-
-        async with httpx.AsyncClient(timeout=60) as client:
-            while True:
-                res = await client.get(
-                    f"{GOLEMIO_STOPS_URL}?limit={page_size}&offset={offset}",
-                    headers=headers,
-                )
-                if res.status_code != 200:
-                    if offset == 0:
-                        return JSONResponse(
-                            {"error": f"Golemio API error: {res.status_code}"},
-                            status_code=502,
-                        )
-                    break
-
-                data = res.json()
-                features = data.get("features", [])
-                if not features:
-                    break
-
-                batch = []
-                for f in features:
-                    props = f.get("properties", {}) or {}
-                    geom = f.get("geometry", {}) or {}
-                    coords = geom.get("coordinates", []) or []
-
-                    stop_id = _first(props.get("stop_id"), props.get("id"))
-                    if stop_id is None or stop_id in seen:
-                        continue
-
-                    # Súradnice: najprv z geometry (lon, lat), inak z properties
-                    if len(coords) >= 2 and coords[0] is not None:
-                        lon, lat = coords[0], coords[1]
-                    else:
-                        lat = props.get("stop_lat")
-                        lon = props.get("stop_lon")
-                    if lat is None or lon is None:
-                        continue
-
-                    seen.add(stop_id)
-                    batch.append(
-                        PragueStop(
-                            stop_id=str(stop_id),
-                            stop_name=props.get("stop_name", ""),
-                            stop_lat=float(lat),
-                            stop_lon=float(lon),
-                        )
-                    )
-
-                if batch:
-                    db.bulk_save_objects(batch)
-                    db.commit()
-                    total += len(batch)
-
-                # ak prišlo menej než page_size, je koniec
-                if len(features) < page_size:
-                    break
-                offset += page_size
-
-        print(f"Prague stops imported: {total}")
-        return {"status": "ok", "imported": total}
-
-    except Exception as e:
-        print(f"Prague stops import error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    """Vráti polohy MHD Praha z cache – okamžite, bez čakania na upstream."""
+    return JSONResponse(vehicle_cache)
 
 
 @router.get("/stops")
 def get_stops(db: Session = Depends(get_db)):
-    """Vráti pražské zastávky z DB."""
     stops = db.query(PragueStop).all()
-    return JSONResponse(
-        [
-            {
-                "id": s.stop_id,
-                "name": s.stop_name,
-                "lat": s.stop_lat,
-                "lon": s.stop_lon,
-            }
-            for s in stops
-        ]
-    )
+    return JSONResponse([
+        {"id": s.stop_id, "name": s.stop_name, "lat": s.stop_lat, "lon": s.stop_lon}
+        for s in stops
+    ])
 
 
 @router.get("/health")
 async def health():
-    headers = {
-        "X-Access-Token": settings.GOLEMIO_API_KEY,
-        "Accept": "application/json",
+    return {
+        "status": "ok" if vehicle_cache else "warming_up",
+        "vehicles": len(vehicle_cache),
+        "last_fetch_age_s": round(time.time() - last_fetch, 1) if last_fetch else None,
     }
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            res = await client.get(f"{GOLEMIO_VEHICLES_URL}?limit=1", headers=headers)
-            if res.status_code == 200:
-                data = res.json()
-                count = len(data.get("features", []))
-                return {"status": "ok", "vehicles": count}
-            return {"status": "error", "code": res.status_code}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
 
 
 @router.get("/stops/count")
 def stops_count(db: Session = Depends(get_db)):
-    """Pomocný endpoint na overenie, koľko zastávok je v DB."""
     return {"count": db.query(PragueStop).count()}

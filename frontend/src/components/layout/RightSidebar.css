@@ -302,3 +302,32 @@
 .rs-detail-head .rs-detail-type {
   margin-bottom: 0;
 }
+
+.rs-region-switch {
+  display: flex;
+  gap: 6px;
+  padding: 4px 16px 10px;
+}
+ 
+.rs-region-btn {
+  flex: 1;
+  background: #161b22;
+  border: 1px solid #21262d;
+  color: #8b949e;
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+ 
+.rs-region-btn:hover {
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+ 
+.rs-region-btn.active {
+  background: #1f6feb22;
+  border-color: #1f6feb66;
+  color: #58a6ff;
+}

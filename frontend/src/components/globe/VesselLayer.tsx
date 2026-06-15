@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import * as Cesium from "cesium"
 import { createVesselIcon, getVesselColor, getVesselCategory } from "../../utils/vesselIcon"
 import type { VesselCategory } from "../../types/vessel"
+import { API_BASE } from "../../config"
 
 interface VesselLayerProps {
   viewer: Cesium.Viewer | null
@@ -14,13 +15,15 @@ export default function VesselLayer({ viewer, categories }: VesselLayerProps) {
   const entitiesRef = useRef<Map<string, Cesium.Entity>>(new Map())
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const categoriesRef = useRef<VesselCategory[]>(categories)
+  const anyVisible = categories.some(c => c.visible)
 
   useEffect(() => {
     if (!viewer) return
+    if (!anyVisible) return
 
     const fetchVessels = async () => {
       try {
-        const res = await fetch("http://localhost:8000/api/v1/vessels/positions")
+        const res = await fetch(`${API_BASE}/api/v1/vessels/positions`)
         const data = await res.json()
         if (!Array.isArray(data)) return
 
@@ -90,7 +93,7 @@ export default function VesselLayer({ viewer, categories }: VesselLayerProps) {
       entitiesRef.current.forEach(e => viewer.entities.remove(e))
       entitiesRef.current.clear()
     }
-  }, [viewer])
+  }, [viewer, anyVisible])
 
   // Reaguj na zmeny viditeľnosti bez reloadu
   useEffect(() => {

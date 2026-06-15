@@ -1,0 +1,52 @@
+// ─────────────────────────────────────────────────────────────────────────
+// ÚPRAVY V Globe.tsx — napojenie GlobeLoader na reálny progres Cesium
+// ─────────────────────────────────────────────────────────────────────────
+
+// 1) HORE medzi importy pridaj:
+import GlobeLoader from "./GlobeLoader"
+
+// 2) V komponente Globe, k existujúcim useState/useRef pridaj stavy loaderu:
+const [loaderHidden, setLoaderHidden] = useState(false)
+const [loaderStatus, setLoaderStatus] = useState("Inicializujem scénu…")
+
+// 3) V hlavnom useEffect (ten s [] deps, kde vytváraš Viewer) — HNEĎ PO tom,
+//    čo máš viewerRef.current vytvorený a po initMap() — pridaj sledovanie
+//    načítania dlaždíc. tileLoadProgressEvent hlási, koľko dlaždíc ešte chýba.
+//
+//    Vlož tento blok pred `setViewer(viewerRef.current)`:
+
+const v = viewerRef.current!
+let settleTimer: ReturnType<typeof setTimeout> | null = null
+
+const onTiles = (queued: number) => {
+  if (loaderHidden) return
+  if (queued > 0) {
+    setLoaderStatus(`Načítavam mapové dlaždice… (${queued})`)
+    if (settleTimer) { clearTimeout(settleTimer); settleTimer = null }
+  } else {
+    // queued === 0 môže krátko preblikávať; počkaj, či ostane na nule
+    setLoaderStatus("Takmer hotovo…")
+    if (!settleTimer) {
+      settleTimer = setTimeout(() => {
+        setLoaderHidden(true)
+        v.scene.globe.tileLoadProgressEvent.removeEventListener(onTiles)
+      }, 350)
+    }
+  }
+}
+v.scene.globe.tileLoadProgressEvent.addEventListener(onTiles)
+
+// Poistka: keď by sa z nejakého dôvodu event nespustil, schovaj po 8 s
+const failSafe = setTimeout(() => setLoaderHidden(true), 8000)
+
+// 4) V cleanup (return () => { ... }) v tom istom useEffect pridaj:
+//      if (settleTimer) clearTimeout(settleTimer)
+//      clearTimeout(failSafe)
+
+// 5) V JSX, vnútri vonkajšieho <div style={{ position: "relative" }}>,
+//    PRED alebo PO <div ref={containerRef} …/> pridaj loader ako overlay:
+
+<GlobeLoader hidden={loaderHidden} status={loaderStatus} />
+
+// Hotovo. Loader teraz prekrýva čierny canvas a zmizne až keď je
+// glóbus reálne vykreslený (alebo po failsafe). Žiadny "škaredý screen".

@@ -3,23 +3,30 @@ import * as Cesium from "cesium"
 import * as satellite from "satellite.js"
 import type { SatelliteCategory } from "../../types/satellite"
 import { createSatelliteIcon } from "../../utils/satelliteIcon"
+import { API_BASE } from "../../config"
 
 interface SatelliteLayerProps {
   viewer: Cesium.Viewer | null
   categories: SatelliteCategory[]
 }
 
-interface SatRec {
+// Jeden satelit: billboard (v collection) + voliteľná dráha (polyline entity).
+interface SatItem {
   name: string
   satrec: satellite.SatRec
   categoryId: string
+  billboard: Cesium.Billboard          // bodka v BillboardCollection
+  orbitEntity?: Cesium.Entity          // dráha (len pre kategórie != starlink)
 }
 
 export default function SatelliteLayer({ viewer, categories }: SatelliteLayerProps) {
-  const entitiesRef = useRef<Map<string, Cesium.Entity[]>>(new Map())
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const satRecsRef = useRef<Map<string, SatRec[]>>(new Map())
+  // Jedna BillboardCollection pre VŠETKY satelity – to je jadro výkonu:
+  // tisíce bodiek idú na GPU naraz, nie ako tisíce samostatných Entity.
+  const collectionRef = useRef<Cesium.BillboardCollection | null>(null)
+  // satelity po kategóriách (kvôli show/hide a pohybu)
+  const itemsRef = useRef<Map<string, SatItem[]>>(new Map())
   const loadedRef = useRef<Set<string>>(new Set())
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const categoriesRef = useRef<SatelliteCategory[]>(categories)
 
   const getPosition = (satrec: satellite.SatRec, date: Date) => {
@@ -42,19 +49,17 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
     for (let i = 0; i <= steps; i++) {
       const date = new Date(now.getTime() + (i / steps) * periodMin * 60 * 1000)
       const pos = getPosition(satrec, date)
-      if (pos) {
-        positions.push(Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt))
-      }
+      if (pos) positions.push(Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt))
     }
     return positions
   }
 
   const applyVisibility = (cat: SatelliteCategory) => {
-    const entities = entitiesRef.current.get(cat.id) || []
-    entities.forEach(e => {
-      e.show = cat.visible
-      if (e.polyline) {
-        e.polyline.show = new Cesium.ConstantProperty(cat.visible && cat.orbitsVisible)
+    const items = itemsRef.current.get(cat.id) || []
+    items.forEach(it => {
+      it.billboard.show = cat.visible
+      if (it.orbitEntity?.polyline) {
+        it.orbitEntity.polyline.show = new Cesium.ConstantProperty(cat.visible && cat.orbitsVisible)
       }
     })
   }
@@ -64,13 +69,13 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
     loadedRef.current.add(cat.id)
 
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/satellites/tle/${cat.group}`)
+      const res = await fetch(`${API_BASE}/api/v1/satellites/tle/${cat.group}`)
       const text = await res.text()
       const lines = text.trim().split("\n").map(l => l.trim())
       const icon = createSatelliteIcon(cat.color)
       const cesiumColor = Cesium.Color.fromCssColorString(cat.color)
-      const entities: Cesium.Entity[] = []
-      const satrecs: SatRec[] = []
+      const collection = collectionRef.current!
+      const items: SatItem[] = []
 
       for (let i = 0; i + 2 < lines.length; i += 3) {
         const name = lines[i]
@@ -79,49 +84,45 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
         if (!line1.startsWith("1") || !line2.startsWith("2")) continue
 
         const satrec = satellite.twoline2satrec(line1, line2)
-        const now = new Date()
-        const pos = getPosition(satrec, now)
+        const pos = getPosition(satrec, new Date())
         if (!pos) continue
 
-        satrecs.push({ name, satrec, categoryId: cat.id })
+        const position = Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt)
 
-        const entity = v.entities.add({
-          name,
+        // bodka do spoločnej collection
+        const billboard = collection.add({
+          position,
+          image: icon,
+          width: 16,
+          height: 16,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
           show: false,
-          position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt),
-          billboard: {
-            image: icon,
-            width: 16,
-            height: 16,
-            verticalOrigin: Cesium.VerticalOrigin.CENTER,
-          },
-          label: {
-            text: name,
-            font: "11px sans-serif",
-            fillColor: Cesium.Color.WHITE,
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 2,
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            pixelOffset: new Cesium.Cartesian2(0, -16),
-            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2000000),
-          },
-          polyline: cat.id !== "starlink" ? {
-            positions: buildOrbit(satrec),
-            width: 1,
-            material: new Cesium.ColorMaterialProperty(cesiumColor.withAlpha(0.3)),
-          } : undefined,
         })
-        entities.push(entity)
-        ;(entity as any)._satrec = satrec
+        // id pre pick (klik) – nesie referenciu na satrec a meno
+        ;(billboard as any).id = { _satrec: satrec, name, _isSatellite: true }
+
+        // dráha len pre kategórie != starlink (rovnako ako predtým)
+        let orbitEntity: Cesium.Entity | undefined
+        if (cat.id !== "starlink") {
+          orbitEntity = v.entities.add({
+            polyline: {
+              positions: buildOrbit(satrec),
+              width: 1,
+              material: new Cesium.ColorMaterialProperty(cesiumColor.withAlpha(0.3)),
+              show: false,
+            },
+          })
+        }
+
+        items.push({ name, satrec, categoryId: cat.id, billboard, orbitEntity })
       }
 
-      entitiesRef.current.set(cat.id, entities)
-      satRecsRef.current.set(cat.id, satrecs)
+      itemsRef.current.set(cat.id, items)
 
       const currentCat = categoriesRef.current.find(c => c.id === cat.id)
       if (currentCat) applyVisibility(currentCat)
 
-      console.log(`${cat.label}: ${entities.length} satelitov`)
+      console.log(`${cat.label}: ${items.length} satelitov`)
     } catch (err) {
       console.error(`Chyba pri načítaní ${cat.label}:`, err)
     }
@@ -129,30 +130,41 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
 
   useEffect(() => {
     if (!viewer) return
+
+    // vytvor spoločnú collection raz
+    if (!collectionRef.current) {
+      collectionRef.current = viewer.scene.primitives.add(
+        new Cesium.BillboardCollection({ scene: viewer.scene })
+      ) as Cesium.BillboardCollection
+    }
+
     categories.forEach(cat => loadCategory(cat, viewer))
 
+    // pohyb satelitov – update pozícií billboardov (len viditeľných)
     intervalRef.current = setInterval(() => {
       const now = new Date()
-      satRecsRef.current.forEach((satrecs, catId) => {
-        const entities = entitiesRef.current.get(catId) || []
-        entities.forEach((entity, index) => {
-          if (!entity.show) return
-          const sat = satrecs[index]
-          if (!sat) return
-          const pos = getPosition(sat.satrec, now)
+      itemsRef.current.forEach(items => {
+        items.forEach(it => {
+          if (!it.billboard.show) return
+          const pos = getPosition(it.satrec, now)
           if (!pos) return
-          entity.position = new Cesium.ConstantPositionProperty(
-            Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt)
-          )
+          it.billboard.position = Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, pos.alt)
         })
       })
     }, 1000)
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
-      entitiesRef.current.forEach(entities => entities.forEach(e => viewer.entities.remove(e)))
-      entitiesRef.current.clear()
-      satRecsRef.current.clear()
+      // odstráň dráhy (entity)
+      itemsRef.current.forEach(items =>
+        items.forEach(it => { if (it.orbitEntity) viewer.entities.remove(it.orbitEntity) })
+      )
+      // odstráň celú collection naraz
+      if (collectionRef.current) {
+        viewer.scene.primitives.remove(collectionRef.current)
+        collectionRef.current = null
+      }
+      itemsRef.current.clear()
       loadedRef.current.clear()
     }
   }, [viewer])

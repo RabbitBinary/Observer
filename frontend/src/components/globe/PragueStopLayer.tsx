@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react"
 import * as Cesium from "cesium"
 import type { PragueCategory } from "../../types/prague"
+import { API_BASE } from "../../config"
 
 interface PragueStopLayerProps {
   viewer: Cesium.Viewer | null
@@ -13,8 +14,6 @@ interface StopInfo {
   lat: number
   lon: number
 }
-
-const API_BASE = "http://localhost:8000"
 
 // Zastávok je takmer 4000 -> zobrazíme ich až pri priblížení (do ~40 km),
 // inak by glóbus z diaľky zbytočne kreslil tisíce bodov.

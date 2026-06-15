@@ -20,7 +20,7 @@ interface StopRoute {
   long_name: string
 }
 
-const API_BASE = "http://localhost:8000"
+import { API_BASE } from "../../config"
 
 const TYPE_EMOJI: Record<number, string> = {
   0: "🚊",
