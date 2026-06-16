@@ -9,6 +9,7 @@ interface TopbarProps {
   basemap: BasemapMode
   onBasemapChange: (mode: BasemapMode) => void
   onSearchPick: (hit: SearchHit) => void
+  onSearchClear: () => void
 }
 
 function preview(mode: BasemapMode) {
@@ -16,7 +17,7 @@ function preview(mode: BasemapMode) {
   return <img src={src} alt="" width={52} height={40} style={{ objectFit: "cover", display: "block" }} />
 }
 
-export default function Topbar({ basemap, onBasemapChange, onSearchPick }: TopbarProps) {
+export default function Topbar({ basemap, onBasemapChange, onSearchPick, onSearchClear }: TopbarProps) {
   const logout = useAuthStore((s) => s.logout)
   const navigate = useNavigate()
 
@@ -30,7 +31,7 @@ export default function Topbar({ basemap, onBasemapChange, onSearchPick }: Topba
       <span className="topbar-title">ZEUS</span>
 
       <div className="topbar-center">
-        <SearchPanel onPick={onSearchPick} />
+        <SearchPanel onPick={onSearchPick} onClear={onSearchClear} />
 
         <div className="topbar-basemaps">
           {BASEMAPS.map((b) => (

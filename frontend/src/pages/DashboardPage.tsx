@@ -79,29 +79,26 @@ export default function DashboardPage() {
     })
   }
 
-  // Klik na vysledok vyhladavania: zapni vrstvu, zazoomuj priamo na objekt, zvyrazni.
+  // Klik na vysledok vyhladavania: zobraz LEN ten jeden objekt (ziadne vrstvy), zazoomuj, zameraj HUD.
   const handleSearchPick = (hit: SearchHit) => {
     if (!globeViewer) return
 
-    if (hit.kind === "satellite" && hit.group) {
-      // potlac automaticky regionovy zoom, ktory by inak odletel od objektu
-      suppressRegionZoom.current = true
-      setCategories(prev =>
-        prev.map(c => (c.group === hit.group ? { ...c, visible: true } : c))
-      )
-    }
-
-    // vyska kamery: satelit nad jeho drahu, miesto nizko
-    const camHeight = hit.kind === "satellite" ? 2_000_000 : 8000
+    // vyska kamery: satelit nad jeho drahu, lod blizko hladiny, miesto nizko
+    const camHeight =
+      hit.kind === "satellite" ? 5_000_000 :
+      hit.kind === "vessel" ? 2_500_000 :
+      8000
     globeViewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(hit.lon, hit.lat, camHeight),
       duration: 1.8,
       easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT,
     })
 
-    // cerveny stvorec: satelit -> sleduje pohyb cez TLE; miesto -> ziadny stvorec
+    // HUD + samostatna entita objektu (nezavisle od vrstiev):
     if (hit.kind === "satellite" && hit.line1 && hit.line2) {
       globeApiRef.current?.highlightSatellite(hit.line1, hit.line2, hit.name)
+    } else if (hit.kind === "vessel") {
+      globeApiRef.current?.highlightStatic(hit.lon, hit.lat, 0, hit.name, `MMSI ${hit.mmsi ?? "—"}`)
     } else {
       globeApiRef.current?.clearHighlight()
     }
@@ -163,6 +160,7 @@ export default function DashboardPage() {
         basemap={basemap}
         onBasemapChange={setBasemap}
         onSearchPick={handleSearchPick}
+        onSearchClear={() => globeApiRef.current?.clearHighlight()}
       />
       <div className="dashboard-body">
         <LeftSidebar />

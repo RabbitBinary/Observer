@@ -67,3 +67,27 @@ async def ais_background():
 @router.get("/positions")
 def get_positions():
     return JSONResponse(list(vessel_cache.values()))
+
+@router.get("/search")
+def search_vessels(q: str):
+    query = q.strip().upper()
+    if not query or len(query) < 2:
+        return JSONResponse([])
+
+    results = []
+    for v in vessel_cache.values():
+        name = (v.get("name") or "").upper()
+        mmsi = str(v.get("mmsi") or "")
+        if query in name or query in mmsi:
+            results.append({
+                "mmsi": v.get("mmsi"),
+                "name": v.get("name"),
+                "lat": v.get("lat"),
+                "lon": v.get("lon"),
+                "speed": v.get("speed", 0),
+                "ship_type": v.get("ship_type", "0"),
+            })
+        if len(results) >= 20:
+            break
+
+    return JSONResponse(results)

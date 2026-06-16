@@ -7,7 +7,7 @@ import "./SearchPanel.css"
 // Výsledok hľadania – zjednotený typ pre miesta aj satelity (a neskôr ďalšie).
 export interface SearchHit {
     id: string
-    kind: "place" | "satellite"
+    kind: "place" | "satellite" | "vessel"
     name: string
     sub: string          // podtitul (napr. "Satelit · Orbitálne stanice")
     lon: number
@@ -16,6 +16,7 @@ export interface SearchHit {
     group?: string       // skupina satelitu (na zapnutie vrstvy)
     line1?: string       // TLE riadok 1 (satelit – na sledovanie štvorcom)
     line2?: string       // TLE riadok 2
+    mmsi?: string        // MMSI lode
 }
 
 interface CategoryToggle {
@@ -26,6 +27,7 @@ interface CategoryToggle {
 
 interface SearchPanelProps {
     onPick: (hit: SearchHit) => void
+    onClear: () => void
 }
 
 // Kategórie v paneli. Zatiaľ funkčné: places + satellites.
@@ -33,18 +35,19 @@ interface SearchPanelProps {
 // zatiaľ nerieši – pridáme rovnakým vzorom neskôr).
 const INITIAL_CATEGORIES: CategoryToggle[] = [
     { id: "places", label: "Miesta", enabled: true },
-    { id: "satellites", label: "Satelity", enabled: true },
+    { id: "satellites", label: "Satelity", enabled: false },
     { id: "vessels", label: "Lode", enabled: false },
     { id: "aircraft", label: "Lietadlá", enabled: false },
     { id: "quakes", label: "Zemetrasenia", enabled: false },
 ]
 
-export default function SearchPanel({ onPick }: SearchPanelProps) {
+export default function SearchPanel({ onPick, onClear }: SearchPanelProps) {
     const [query, setQuery] = useState("")
     const [cats, setCats] = useState<CategoryToggle[]>(INITIAL_CATEGORIES)
     const [hits, setHits] = useState<SearchHit[]>([])
     const [open, setOpen] = useState(false)
     const [loading, setLoading] = useState(false)
+    const [active, setActive] = useState<SearchHit | null>(null)  // aktívne sledovaný objekt (celý hit)
     const preloadedRef = useRef<Set<string>>(new Set())
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -101,6 +104,28 @@ export default function SearchPanel({ onPick }: SearchPanelProps) {
                 } catch (e) { console.error("sat search:", e) }
             }
 
+            if (isOn("vessels")) {
+                try {
+                    const res = await fetch(`${API_BASE}/api/v1/vessels/search?q=${encodeURIComponent(q)}`)
+                    const data = await res.json()
+                    if (Array.isArray(data)) {
+                        data.forEach((v: any) => {
+                            if (v.lat == null || v.lon == null) return
+                            found.push({
+                                id: `vessel-${v.mmsi}`,
+                                kind: "vessel",
+                                name: v.name || v.mmsi,
+                                sub: `Loď · MMSI ${v.mmsi}`,
+                                lon: Number(v.lon),
+                                lat: Number(v.lat),
+                                alt: 0,
+                                mmsi: v.mmsi,
+                            })
+                        })
+                    }
+                } catch (e) { console.error("vessel search:", e) }
+            }
+
             if (isOn("places")) {
                 try {
                     const res = await fetch(
@@ -132,6 +157,17 @@ export default function SearchPanel({ onPick }: SearchPanelProps) {
         onPick(hit)
         setOpen(false)
         setQuery("")
+        setActive(hit.kind === "place" ? null : hit)  // miesto nemá zameriavač
+    }
+
+    // klik na lištu "Sledujem" – znova zobraz naposledy sledovaný cieľ
+    const reselect = () => {
+        if (active) onPick(active)
+    }
+
+    const handleClear = () => {
+        setActive(null)
+        onClear()
     }
 
     return (
@@ -164,6 +200,19 @@ export default function SearchPanel({ onPick }: SearchPanelProps) {
                 ))}
             </div>
 
+            {active && (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", borderTop: "1px solid #21262d", background: "#0d1117" }}>
+                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#ff3b30", flexShrink: 0 }} />
+                    <span
+                        onClick={reselect}
+                        title="Znova zobraziť cieľ"
+                        style={{ flex: 1, fontSize: "12px", color: "#e6edf3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer" }}
+                    >Sledujem: {active.name}</span>
+                    <button type="button" onClick={handleClear} title="Zrušiť sledovanie"
+                        style={{ background: "transparent", border: "none", color: "#8b949e", cursor: "pointer", fontSize: "14px", lineHeight: 1, padding: "2px 4px" }}>✕</button>
+                </div>
+            )}
+
             {open && (
                 <div className="sp-dropdown">
                     {loading && <div className="sp-empty">Hľadám…</div>}
@@ -176,6 +225,11 @@ export default function SearchPanel({ onPick }: SearchPanelProps) {
                                         <rect x="14" y="14" width="8" height="8" rx="1" fill="#00d4ff" />
                                         <line x1="4" y1="18" x2="13" y2="18" stroke="#00d4ff" strokeWidth="1.5" />
                                         <line x1="23" y1="18" x2="32" y2="18" stroke="#00d4ff" strokeWidth="1.5" />
+                                    </svg>
+                                ) : hit.kind === "vessel" ? (
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                        <path d="M12 2 L20 20 L12 15 L4 20 Z" fill="#0066aa" />
+                                        <path d="M12 2 L20 20 L12 15 Z" fill="#00d4ff" />
                                     </svg>
                                 ) : (
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">

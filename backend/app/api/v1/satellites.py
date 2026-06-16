@@ -26,13 +26,60 @@ GROUPS = {
     "ses": "https://celestrak.org/NORAD/elements/gp.php?GROUP=ses&FORMAT=tle",
     "telesat": "https://celestrak.org/NORAD/elements/gp.php?GROUP=telesat&FORMAT=tle",
     "oneweb": "https://celestrak.org/NORAD/elements/gp.php?GROUP=oneweb&FORMAT=tle",
-    "debris": "https://celestrak.org/NORAD/elements/gp.php?GROUP=debris&FORMAT=tle",
+}
+
+# Debris skupiny – Celestrak nemá generický "debris", má konkrétne skupiny
+# (rozpady satelitov a protisatelitné testy). Spájame ich do jednej kategórie.
+DEBRIS_GROUPS = {
+    "cosmos-1408-debris": "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-1408-debris&FORMAT=tle",
+    "fengyun-1c-debris": "https://celestrak.org/NORAD/elements/gp.php?GROUP=fengyun-1c-debris&FORMAT=tle",
+    "iridium-33-debris": "https://celestrak.org/NORAD/elements/gp.php?GROUP=iridium-33-debris&FORMAT=tle",
+    "cosmos-2251-debris": "https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-2251-debris&FORMAT=tle",
 }
 
 CACHE_TTL = 7200  # 2 hodiny
 
+
+async def fetch_debris_combined(db: Session) -> str:
+    """Stiahne a spojí všetky debris skupiny do jedného TLE textu (s cache pod 'debris')."""
+    cached = db.query(TleCache).filter(TleCache.group_name == "debris").first()
+    now = time.time()
+    if cached:
+        age = cached.updated_at.timestamp() if cached.updated_at else 0
+        if now - age < CACHE_TTL:
+            return cached.data
+
+    combined = []
+    async with httpx.AsyncClient() as client:
+        for url in DEBRIS_GROUPS.values():
+            try:
+                res = await client.get(url, timeout=30)
+                if res.status_code == 200 and res.text.strip():
+                    combined.append(res.text.strip())
+            except Exception as e:
+                print(f"debris fetch error: {e}")
+
+    text = "\n".join(combined)
+    if text:
+        if cached:
+            cached.data = text
+            cached.updated_at = None
+        else:
+            cached = TleCache(group_name="debris", data=text)
+            db.add(cached)
+        db.commit()
+        return text
+    return cached.data if cached else ""
+
 @router.get("/tle/{group}")
 async def get_tle(group: str, db: Session = Depends(get_db)):
+    # debris = spojenie viacerých debris skupín
+    if group == "debris":
+        text = await fetch_debris_combined(db)
+        if text:
+            return PlainTextResponse(text)
+        return PlainTextResponse("", status_code=503)
+
     url = GROUPS.get(group)
     if not url:
         return PlainTextResponse("", status_code=404)
@@ -121,4 +168,10 @@ async def preload_satellites(db: Session = Depends(get_db)):
                     loaded += 1
             except Exception as e:
                 print(f"preload {group} error: {e}")
+    # debris (spojené skupiny) – aby v ňom search tiež hľadal
+    try:
+        await fetch_debris_combined(db)
+        loaded += 1
+    except Exception as e:
+        print(f"preload debris error: {e}")
     return {"status": "ok", "loaded": loaded}

@@ -28,6 +28,7 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
   const loadedRef = useRef<Set<string>>(new Set())
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const categoriesRef = useRef<SatelliteCategory[]>(categories)
+  const anyVisible = categories.some(c => c.visible)
 
   const getPosition = (satrec: satellite.SatRec, date: Date) => {
     const posVel = satellite.propagate(satrec, date)
@@ -98,12 +99,12 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
           show: false,
         })
-        // id pre pick (klik) – nesie referenciu na satrec a meno
-        ;(billboard as any).id = { _satrec: satrec, name, _isSatellite: true }
+          // id pre pick (klik) – nesie referenciu na satrec a meno
+          ; (billboard as any).id = { _satrec: satrec, name, _isSatellite: true }
 
-        // dráha len pre kategórie != starlink (rovnako ako predtým)
+        // dráha len pre menšie kategórie (nie starlink/debris – tam sú tisíce kusov)
         let orbitEntity: Cesium.Entity | undefined
-        if (cat.id !== "starlink") {
+        if (cat.id !== "starlink" && cat.id !== "debris") {
           orbitEntity = v.entities.add({
             polyline: {
               positions: buildOrbit(satrec),
@@ -128,8 +129,22 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
     }
   }
 
+  // Odstráni satelity kategórie z collection aj ich dráhy (reálne uvoľní scénu).
+  const unloadCategory = (catId: string, v: Cesium.Viewer) => {
+    const items = itemsRef.current.get(catId)
+    if (!items) return
+    const collection = collectionRef.current
+    items.forEach(it => {
+      if (collection) collection.remove(it.billboard)
+      if (it.orbitEntity) v.entities.remove(it.orbitEntity)
+    })
+    itemsRef.current.delete(catId)
+    loadedRef.current.delete(catId)
+  }
+
   useEffect(() => {
     if (!viewer) return
+    if (!anyVisible) return
 
     // vytvor spoločnú collection raz
     if (!collectionRef.current) {
@@ -138,9 +153,8 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
       ) as Cesium.BillboardCollection
     }
 
-    categories.forEach(cat => loadCategory(cat, viewer))
+    categories.filter(cat => cat.visible).forEach(cat => loadCategory(cat, viewer))
 
-    // pohyb satelitov – update pozícií billboardov (len viditeľných)
     intervalRef.current = setInterval(() => {
       const now = new Date()
       itemsRef.current.forEach(items => {
@@ -155,11 +169,9 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
-      // odstráň dráhy (entity)
       itemsRef.current.forEach(items =>
         items.forEach(it => { if (it.orbitEntity) viewer.entities.remove(it.orbitEntity) })
       )
-      // odstráň celú collection naraz
       if (collectionRef.current) {
         viewer.scene.primitives.remove(collectionRef.current)
         collectionRef.current = null
@@ -167,12 +179,24 @@ export default function SatelliteLayer({ viewer, categories }: SatelliteLayerPro
       itemsRef.current.clear()
       loadedRef.current.clear()
     }
-  }, [viewer])
+  }, [viewer, anyVisible])
 
   useEffect(() => {
     categoriesRef.current = categories
-    categories.forEach(cat => applyVisibility(cat))
-  }, [categories])
+    if (!viewer) return
+    // zapnuté: načítaj (ak ešte nie sú) a zobraz; vypnuté: odstráň z collection
+    categories.forEach(cat => {
+      if (cat.visible) {
+        if (!loadedRef.current.has(cat.id)) {
+          loadCategory(cat, viewer)
+        } else {
+          applyVisibility(cat)
+        }
+      } else {
+        unloadCategory(cat.id, viewer)
+      }
+    })
+  }, [categories, viewer])
 
   return null
 }

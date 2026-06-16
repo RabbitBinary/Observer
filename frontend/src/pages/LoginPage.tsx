@@ -30,7 +30,7 @@ export default function LoginPage() {
   return (
     <div className="login-wrapper">
       <div className="login-box">
-        <h1 className="login-title">Observer</h1>
+        <h1 className="login-title">ZEUS</h1>
         <p className="login-subtitle">Prihláste sa do systému</p>
         <form onSubmit={handleSubmit} className="login-form">
           <div className="login-field">

@@ -24,4 +24,5 @@ export const SATELLITE_CATEGORIES: SatelliteCategory[] = [
   { id: "weather", label: "Meteorologické", group: "weather", color: "#fbbf24", visible: false, orbitsVisible: false },
   { id: "science", label: "Vedecké", group: "science", color: "#a855f7", visible: false, orbitsVisible: false },
   { id: "amateur", label: "Amatérske", group: "amateur", color: "#94a3b8", visible: false, orbitsVisible: false },
+  { id: "debris", label: "Vesmírny odpad", group: "debris", color: "#71717a", visible: false, orbitsVisible: false },
 ]

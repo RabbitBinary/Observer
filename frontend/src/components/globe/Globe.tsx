@@ -20,6 +20,8 @@ import type { AircraftCategory, AircraftRegion } from "../../types/aircraft"
 import GlobeLoader from "./GlobeLoader"
 import { API_BASE } from "../../config"
 import { BASEMAPS, type BasemapMode } from "../layout/basemap"
+import { createSatelliteIcon } from "../../utils/satelliteIcon"
+import { createVesselIcon } from "../../utils/vesselIcon"
 
 Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_TOKEN
 
@@ -27,6 +29,8 @@ Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_TOKEN
 export interface GlobeApi {
   // zameraj satelit podľa TLE – HUD sa drží na ňom (počíta pozíciu každý frame)
   highlightSatellite: (line1: string, line2: string, name?: string) => void
+  // zameraj statický bod (loď, lietadlo) – HUD na pevnej pozícii
+  highlightStatic: (lon: number, lat: number, alt: number, name: string, extra?: string) => void
   // zruš zameranie
   clearHighlight: () => void
 }
@@ -63,6 +67,8 @@ export default function Globe({ categories, vesselCategories, transitCategories,
 
   // HUD zameriavač – aktuálne sledovaný cieľ (null = skrytý)
   const hudTargetRef = useRef<HudTarget | null>(null)
+  // samostatná entita pre vyhľadaný objekt (ikona satelitu/lode), nezávislá od vrstiev
+  const searchEntityRef = useRef<Cesium.Entity | null>(null)
   // odkazy na HUD DOM prvky (kríž, štvorec, text) – posúvame ich každý frame
   const hudRef = useRef<HTMLDivElement>(null)
   const hudVLineRef = useRef<HTMLDivElement>(null)
@@ -72,28 +78,36 @@ export default function Globe({ categories, vesselCategories, transitCategories,
   const hudCoordsRef = useRef<HTMLDivElement>(null)
   const hudExtraRef = useRef<HTMLDivElement>(null)
 
-  // zruš zameriavač
+  // zruš zameriavač (HUD aj vyhľadanú entitu)
   const clearHighlight = () => {
     hudTargetRef.current = null
     if (hudRef.current) hudRef.current.style.display = "none"
+    const v = viewerRef.current
+    if (v && searchEntityRef.current) {
+      v.entities.remove(searchEntityRef.current)
+    }
+    searchEntityRef.current = null
   }
 
   // zvýrazni satelit podľa už hotového satrec – pozícia sa počíta každý frame
-  const highlightSatrec = (satrec: satelliteJs.SatRec, name: string) => {
+  // withEntity=true: vytvor aj viditeľnú ikonu (pre vyhľadávanie, kde vrstva nie je zapnutá)
+  const highlightSatrec = (satrec: satelliteJs.SatRec, name: string, withEntity = false) => {
+    const computePos = () => {
+      const now = new Date()
+      const pv = satelliteJs.propagate(satrec, now)
+      if (!pv.position || typeof pv.position === "boolean") return null
+      const gmst = satelliteJs.gstime(now)
+      const geo = satelliteJs.eciToGeodetic(pv.position as satelliteJs.EciVec3<number>, gmst)
+      return Cesium.Cartesian3.fromDegrees(
+        satelliteJs.degreesLong(geo.longitude),
+        satelliteJs.degreesLat(geo.latitude),
+        geo.height * 1000
+      )
+    }
+
     hudTargetRef.current = {
       name,
-      getPosition: () => {
-        const now = new Date()
-        const pv = satelliteJs.propagate(satrec, now)
-        if (!pv.position || typeof pv.position === "boolean") return null
-        const gmst = satelliteJs.gstime(now)
-        const geo = satelliteJs.eciToGeodetic(pv.position as satelliteJs.EciVec3<number>, gmst)
-        return Cesium.Cartesian3.fromDegrees(
-          satelliteJs.degreesLong(geo.longitude),
-          satelliteJs.degreesLat(geo.latitude),
-          geo.height * 1000
-        )
-      },
+      getPosition: computePos,
       getInfo: () => {
         const now = new Date()
         const pv = satelliteJs.propagate(satrec, now)
@@ -113,19 +127,37 @@ export default function Globe({ categories, vesselCategories, transitCategories,
         return { coords, extra }
       },
     }
+
+    // samostatná pohyblivá ikona satelitu (len pre vyhľadávanie)
+    if (withEntity) {
+      const v = viewerRef.current
+      if (v) {
+        searchEntityRef.current = v.entities.add({
+          position: new Cesium.CallbackPositionProperty(() => computePos() ?? undefined, false),
+          billboard: {
+            image: createSatelliteIcon("#00d4ff"),
+            width: 18,
+            height: 18,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        })
+      }
+    }
   }
 
-  // zvýrazni satelit podľa TLE (pre vyhľadávanie)
+  // zvýrazni satelit podľa TLE (pre vyhľadávanie) – vytvorí aj viditeľnú ikonu
   const highlightSatellite = (line1: string, line2: string, name = "") => {
     try {
-      highlightSatrec(satelliteJs.twoline2satrec(line1, line2), name)
+      highlightSatrec(satelliteJs.twoline2satrec(line1, line2), name, true)
     } catch {
       // neplatné TLE – nič
     }
   }
 
   // zvýrazni statický bod (loď, lietadlo, zemetrasenie) – pevná pozícia
-  const highlightStatic = (lon: number, lat: number, alt: number, name: string, extra = "") => {
+  // withEntity=true: vytvor aj viditeľnú ikonu lode (pre vyhľadávanie)
+  const highlightStatic = (lon: number, lat: number, alt: number, name: string, extra = "", withEntity = false) => {
     const pos = Cesium.Cartesian3.fromDegrees(lon, lat, alt)
     hudTargetRef.current = {
       name,
@@ -134,6 +166,21 @@ export default function Globe({ categories, vesselCategories, transitCategories,
         coords: `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"}  ${Math.abs(lon).toFixed(2)}°${lon >= 0 ? "E" : "W"}`,
         extra,
       }),
+    }
+    if (withEntity) {
+      const v = viewerRef.current
+      if (v) {
+        searchEntityRef.current = v.entities.add({
+          position: pos,
+          billboard: {
+            image: createVesselIcon("#00d4ff", 0),
+            width: 18,
+            height: 18,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        })
+      }
     }
   }
 
@@ -368,7 +415,11 @@ export default function Globe({ categories, vesselCategories, transitCategories,
 
     setViewer(viewerRef.current)
     onViewerReady(viewerRef.current)
-    onApiReady?.({ highlightSatellite, clearHighlight })
+    onApiReady?.({
+      highlightSatellite,
+      highlightStatic: (lon, lat, alt, name, extra) => highlightStatic(lon, lat, alt, name, extra, true),
+      clearHighlight,
+    })
 
     return () => {
       if (settleTimer) clearTimeout(settleTimer)
@@ -475,7 +526,7 @@ export default function Globe({ categories, vesselCategories, transitCategories,
           <div style={{ position: "absolute", left: "50%", top: "calc(50% + 44px)", transform: "translateX(-50%)", textAlign: "center", fontFamily: "monospace", whiteSpace: "nowrap", background: "rgba(0,0,0,0.55)", padding: "5px 10px", borderRadius: "4px" }}>
             <div ref={hudNameRef} style={{ color: "#ff6b60", fontSize: "13px", fontWeight: 500, letterSpacing: "1px" }} />
             <div ref={hudCoordsRef} style={{ color: "#9fe1cb", fontSize: "11px", marginTop: "3px" }} />
-            <div ref={hudExtraRef} style={{ color: "#5b6b7a", fontSize: "10px", marginTop: "1px" }} />
+            <div ref={hudExtraRef} style={{ color: "#CACFD4", fontSize: "10px", marginTop: "1px" }} />
           </div>
         </div>
       </div>

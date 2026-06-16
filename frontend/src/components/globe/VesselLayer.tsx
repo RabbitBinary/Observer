@@ -30,15 +30,26 @@ export default function VesselLayer({ viewer, categories }: VesselLayerProps) {
         const ids = new Set<string>()
         data.forEach((v: any) => {
           const mmsi = String(v.mmsi)
-          ids.add(mmsi)
           const shipType = parseInt(v.ship_type) || 0
           const category = getVesselCategory(shipType)
+          const cat = categoriesRef.current.find(c => c.id === category)
+          const visible = cat?.visible ?? false
+
+          // vypnutá kategória: entitu nevytváraj; ak existuje, odstráň ju
+          if (!visible) {
+            const existing = entitiesRef.current.get(mmsi)
+            if (existing) {
+              viewer.entities.remove(existing)
+              entitiesRef.current.delete(mmsi)
+            }
+            return
+          }
+
+          ids.add(mmsi)
           const color = getVesselColor(shipType)
           const heading = v.heading || 0
           const icon = createVesselIcon(color, heading)
           const position = Cesium.Cartesian3.fromDegrees(v.lon, v.lat)
-          const cat = categoriesRef.current.find(c => c.id === category)
-          const visible = cat?.visible ?? false
 
           if (entitiesRef.current.has(mmsi)) {
             const entity = entitiesRef.current.get(mmsi)!
@@ -49,7 +60,7 @@ export default function VesselLayer({ viewer, categories }: VesselLayerProps) {
           } else {
             const entity = viewer.entities.add({
               name: v.name,
-              show: visible,
+              show: true,
               position,
               billboard: {
                 image: icon,
@@ -95,16 +106,20 @@ export default function VesselLayer({ viewer, categories }: VesselLayerProps) {
     }
   }, [viewer, anyVisible])
 
-  // Reaguj na zmeny viditeľnosti bez reloadu
+  // Reaguj na zmeny viditeľnosti – vypnuté kategórie reálne odstráň zo scény
   useEffect(() => {
     categoriesRef.current = categories
-    entitiesRef.current.forEach(entity => {
+    if (!viewer) return
+    entitiesRef.current.forEach((entity, key) => {
       const data = (entity as any)._vesselData
       if (!data) return
       const cat = categories.find(c => c.id === data.category)
-      entity.show = cat?.visible ?? false
+      if (!cat?.visible) {
+        viewer.entities.remove(entity)
+        entitiesRef.current.delete(key)
+      }
     })
-  }, [categories])
+  }, [categories, viewer])
 
   return null
 }
